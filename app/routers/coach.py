@@ -89,6 +89,10 @@ async def mark_attendance(
     if not session:
         raise HTTPException(status_code=404, detail="Session not found")
 
+    student_result = await db.execute(select(Student).where(Student.id == data.student_id))
+    if not student_result.scalar_one_or_none():
+        raise HTTPException(status_code=404, detail=f"Student with ID {data.student_id} not found")
+
     attendance = Attendance(
         session_id=session_id,
         student_id=data.student_id,

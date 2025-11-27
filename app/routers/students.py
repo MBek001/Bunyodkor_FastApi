@@ -76,6 +76,12 @@ async def create_student(
     data: StudentCreate,
     db: Annotated[AsyncSession, Depends(get_db)],
 ):
+    if data.group_id:
+        from app.models.domain import Group
+        group_result = await db.execute(select(Group).where(Group.id == data.group_id))
+        if not group_result.scalar_one_or_none():
+            raise HTTPException(status_code=404, detail=f"Group with ID {data.group_id} not found")
+
     student = Student(**data.model_dump())
     db.add(student)
     await db.commit()
@@ -109,7 +115,15 @@ async def update_student(
     if not student:
         raise HTTPException(status_code=404, detail="Student not found")
 
-    for field, value in data.model_dump(exclude_unset=True).items():
+    update_data = data.model_dump(exclude_unset=True)
+
+    if "group_id" in update_data and update_data["group_id"] is not None:
+        from app.models.domain import Group
+        group_result = await db.execute(select(Group).where(Group.id == update_data["group_id"]))
+        if not group_result.scalar_one_or_none():
+            raise HTTPException(status_code=404, detail=f"Group with ID {update_data['group_id']} not found")
+
+    for field, value in update_data.items():
         setattr(student, field, value)
 
     await db.commit()
