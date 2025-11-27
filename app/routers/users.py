@@ -1,0 +1,112 @@
+from typing import Annotated
+from fastapi import APIRouter, Depends, HTTPException, status, Query
+from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy import select, func
+from app.core.db import get_db
+from app.core.security import hash_password
+from app.core.permissions import PERM_USERS_MANAGE
+from app.models.auth import User, Role
+from app.schemas.auth import UserRead, UserCreate, UserUpdate, UserRolesUpdate, UserWithRoles
+from app.schemas.common import DataResponse, PaginationMeta
+from app.deps import require_permission
+
+router = APIRouter(prefix="/users", tags=["Users"])
+
+
+@router.get("", response_model=DataResponse[list[UserWithRoles]], dependencies=[Depends(require_permission(PERM_USERS_MANAGE))])
+async def get_users(
+    db: Annotated[AsyncSession, Depends(get_db)],
+    page: int = Query(1, ge=1),
+    page_size: int = Query(20, ge=1, le=100),
+):
+    offset = (page - 1) * page_size
+    result = await db.execute(select(User).offset(offset).limit(page_size))
+    users = result.scalars().all()
+
+    count_result = await db.execute(select(func.count(User.id)))
+    total = count_result.scalar()
+
+    return DataResponse(
+        data=[UserWithRoles.model_validate(u) for u in users],
+        meta=PaginationMeta(
+            page=page,
+            page_size=page_size,
+            total=total,
+            total_pages=(total + page_size - 1) // page_size,
+        ),
+    )
+
+
+@router.post("", response_model=DataResponse[UserRead], dependencies=[Depends(require_permission(PERM_USERS_MANAGE))])
+async def create_user(
+    data: UserCreate,
+    db: Annotated[AsyncSession, Depends(get_db)],
+):
+    existing = await db.execute(select(User).where(User.phone == data.phone))
+    if existing.scalar_one_or_none():
+        raise HTTPException(status_code=400, detail="Phone already registered")
+
+    user = User(
+        phone=data.phone,
+        email=data.email,
+        full_name=data.full_name,
+        hashed_password=hash_password(data.password),
+        is_super_admin=data.is_super_admin,
+        status=data.status,
+    )
+    db.add(user)
+    await db.commit()
+    await db.refresh(user)
+
+    return DataResponse(data=UserRead.model_validate(user))
+
+
+@router.patch("/{user_id}", response_model=DataResponse[UserRead], dependencies=[Depends(require_permission(PERM_USERS_MANAGE))])
+async def update_user(
+    user_id: int,
+    data: UserUpdate,
+    db: Annotated[AsyncSession, Depends(get_db)],
+):
+    result = await db.execute(select(User).where(User.id == user_id))
+    user = result.scalar_one_or_none()
+
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+
+    if data.phone:
+        user.phone = data.phone
+    if data.email:
+        user.email = data.email
+    if data.full_name:
+        user.full_name = data.full_name
+    if data.password:
+        user.hashed_password = hash_password(data.password)
+    if data.status:
+        user.status = data.status
+
+    await db.commit()
+    await db.refresh(user)
+
+    return DataResponse(data=UserRead.model_validate(user))
+
+
+@router.patch("/{user_id}/roles", response_model=DataResponse[UserWithRoles], dependencies=[Depends(require_permission(PERM_USERS_MANAGE))])
+async def update_user_roles(
+    user_id: int,
+    data: UserRolesUpdate,
+    db: Annotated[AsyncSession, Depends(get_db)],
+):
+    result = await db.execute(select(User).where(User.id == user_id))
+    user = result.scalar_one_or_none()
+
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+
+    roles_result = await db.execute(select(Role).where(Role.id.in_(data.role_ids)))
+    roles = roles_result.scalars().all()
+
+    user.roles = roles
+    await db.commit()
+    await db.refresh(user)
+
+    return DataResponse(data=UserWithRoles.model_validate(user))
