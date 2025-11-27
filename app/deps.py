@@ -16,7 +16,10 @@ async def get_current_user(
     db: Annotated[AsyncSession, Depends(get_db)],
 ) -> User:
     token = credentials.credentials
+    print(f"DEBUG: Received token: {token[:30]}...")
+
     payload = decode_access_token(token)
+    print(f"DEBUG: Decoded payload: {payload}")
 
     if payload is None:
         raise HTTPException(
@@ -54,6 +57,7 @@ async def get_current_user(
             detail="User account is not active",
         )
 
+    print(f"DEBUG: Successfully authenticated user_id={user.id}")
     return user
 
 
