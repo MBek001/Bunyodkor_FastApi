@@ -2,6 +2,7 @@ from typing import Annotated
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
+from sqlalchemy.orm import selectinload
 from app.core.db import get_db
 from app.core.permissions import PERM_ROLES_MANAGE, ALL_PERMISSIONS
 from app.models.auth import Role, Permission
@@ -14,7 +15,9 @@ router = APIRouter(prefix="/roles", tags=["Roles"])
 
 @router.get("", response_model=DataResponse[list[RoleWithPermissions]], dependencies=[Depends(require_permission(PERM_ROLES_MANAGE))])
 async def get_roles(db: Annotated[AsyncSession, Depends(get_db)]):
-    result = await db.execute(select(Role))
+    result = await db.execute(
+        select(Role).options(selectinload(Role.permissions))
+    )
     roles = result.scalars().all()
     return DataResponse(data=[RoleWithPermissions.model_validate(r) for r in roles])
 
@@ -33,7 +36,7 @@ async def create_role(
 
     db.add(role)
     await db.commit()
-    await db.refresh(role)
+    await db.refresh(role, ["permissions"])
 
     return DataResponse(data=RoleWithPermissions.model_validate(role))
 
@@ -60,7 +63,7 @@ async def update_role(
         role.permissions = permissions
 
     await db.commit()
-    await db.refresh(role)
+    await db.refresh(role, ["permissions"])
 
     return DataResponse(data=RoleWithPermissions.model_validate(role))
 
