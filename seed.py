@@ -52,7 +52,8 @@ async def seed_database():
 
                 db.add(role)
                 await db.flush()
-                print(f"  ✅ Created role: {role_name} with {len(role.permissions)} permissions")
+                # print(f"  ✅ Created role: {role_name} with {len(role_permissions)} permissions")
+
             else:
                 print(f"  ⏭️  Role exists: {role_name}")
 
@@ -65,9 +66,9 @@ async def seed_database():
         if not existing_admin:
             super_admin = User(
                 phone="+998901234567",
-                email="admin@bunyodkor.uz",
+                email="string",
                 full_name="Super Admin",
-                hashed_password=hash_password("admin123"),
+                hashed_password=hash_password("string"),
                 is_super_admin=True,
             )
             db.add(super_admin)
