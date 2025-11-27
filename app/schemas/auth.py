@@ -9,6 +9,13 @@ class LoginRequest(BaseModel):
     password: str
 
 
+class RegisterRequest(BaseModel):
+    phone: str
+    email: Optional[EmailStr] = None
+    full_name: str
+    password: str
+
+
 class TokenResponse(BaseModel):
     access_token: str
     token_type: str = "bearer"

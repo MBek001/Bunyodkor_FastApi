@@ -6,8 +6,9 @@ from sqlalchemy.orm import selectinload
 from app.core.db import get_db
 from app.core.security import verify_password, create_access_token, hash_password
 from app.models.auth import User
-from app.schemas.auth import LoginRequest, TokenResponse, CurrentUserResponse, UserWithRoles, PermissionRead
+from app.schemas.auth import LoginRequest, RegisterRequest, TokenResponse, CurrentUserResponse, UserWithRoles, PermissionRead, UserRead
 from app.deps import CurrentUser
+from app.models.enums import UserStatus
 
 router = APIRouter(prefix="/auth", tags=["Authentication"])
 
@@ -22,7 +23,7 @@ async def login(
             (User.phone == credentials.phone_or_email) | (User.email == credentials.phone_or_email)
         )
     )
-    user = result.scalar_one_or_none()
+    user = result.scalars().first()
 
     if not user or not verify_password(credentials.password, user.hashed_password):
         raise HTTPException(
@@ -32,6 +33,35 @@ async def login(
 
     access_token = create_access_token(data={"sub": str(user.id)})
     return TokenResponse(access_token=access_token)
+
+
+@router.post("/register", response_model=UserRead)
+async def register(
+    data: RegisterRequest,
+    db: Annotated[AsyncSession, Depends(get_db)],
+):
+    existing_phone = await db.execute(select(User).where(User.phone == data.phone))
+    if existing_phone.scalars().first():
+        raise HTTPException(status_code=400, detail="Phone number already registered")
+
+    if data.email:
+        existing_email = await db.execute(select(User).where(User.email == data.email))
+        if existing_email.scalars().first():
+            raise HTTPException(status_code=400, detail="Email already registered")
+
+    user = User(
+        phone=data.phone,
+        email=data.email,
+        full_name=data.full_name,
+        hashed_password=hash_password(data.password),
+        is_super_admin=False,
+        status=UserStatus.ACTIVE,
+    )
+    db.add(user)
+    await db.commit()
+    await db.refresh(user)
+
+    return UserRead.model_validate(user)
 
 
 @router.get("/me", response_model=CurrentUserResponse)
