@@ -2,6 +2,7 @@ from typing import Annotated
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
+from sqlalchemy.orm import selectinload
 from app.core.db import get_db
 from app.core.security import verify_password, create_access_token, hash_password
 from app.models.auth import User
@@ -37,7 +38,11 @@ async def login(
 @router.get("/me", response_model=CurrentUserResponse)
 async def get_current_user_info(user: CurrentUser, db: Annotated[AsyncSession, Depends(get_db)]):
     result = await db.execute(
-        select(User).where(User.id == user.id)
+        select(User)
+        .options(
+            selectinload(User.roles).selectinload(User.roles.property.mapper.class_.permissions)
+        )
+        .where(User.id == user.id)
     )
     user_with_relations = result.scalar_one()
 
