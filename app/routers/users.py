@@ -2,6 +2,7 @@ from typing import Annotated
 from fastapi import APIRouter, Depends, HTTPException, status, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, func
+from sqlalchemy.orm import selectinload
 from app.core.db import get_db
 from app.core.security import hash_password
 from app.core.permissions import PERM_USERS_MANAGE
@@ -20,7 +21,12 @@ async def get_users(
     page_size: int = Query(20, ge=1, le=100),
 ):
     offset = (page - 1) * page_size
-    result = await db.execute(select(User).offset(offset).limit(page_size))
+    result = await db.execute(
+        select(User)
+        .options(selectinload(User.roles))
+        .offset(offset)
+        .limit(page_size)
+    )
     users = result.scalars().all()
 
     count_result = await db.execute(select(func.count(User.id)))
@@ -107,6 +113,6 @@ async def update_user_roles(
 
     user.roles = roles
     await db.commit()
-    await db.refresh(user)
+    await db.refresh(user, ["roles"])
 
     return DataResponse(data=UserWithRoles.model_validate(user))

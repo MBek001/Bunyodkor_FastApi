@@ -32,14 +32,10 @@ def decode_access_token(token: str) -> Optional[dict]:
         payload = jwt.decode(token, settings.SECRET_KEY, algorithms=[settings.ALGORITHM])
         return payload
     except jwt.ExpiredSignatureError:
-        print(f"DEBUG: Token expired")
         return None
-    except jwt.JWTClaimsError as e:
-        print(f"DEBUG: JWT claims error: {e}")
+    except jwt.JWTClaimsError:
         return None
-    except JWTError as e:
-        print(f"DEBUG: JWT decode error: {e}")
+    except JWTError:
         return None
-    except Exception as e:
-        print(f"DEBUG: Unexpected error decoding token: {e}")
+    except Exception:
         return None
