@@ -30,6 +30,7 @@ async def login(
         )
 
     access_token = create_access_token(data={"sub": user.id})
+    print(f"DEBUG: Created token for user_id={user.id}, token_preview={access_token[:30]}...")
     return TokenResponse(access_token=access_token)
 
 
