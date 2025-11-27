@@ -12,6 +12,17 @@ async def create_manual_transaction(
     data: ManualTransactionCreate,
     user_id: int,
 ) -> Transaction:
+    if data.student_id:
+        from app.models.domain import Student
+        student_result = await db.execute(select(Student).where(Student.id == data.student_id))
+        if not student_result.scalar_one_or_none():
+            raise ValueError(f"Student with ID {data.student_id} not found")
+
+    if data.contract_id:
+        contract_result = await db.execute(select(Contract).where(Contract.id == data.contract_id))
+        if not contract_result.scalar_one_or_none():
+            raise ValueError(f"Contract with ID {data.contract_id} not found")
+
     transaction = Transaction(
         amount=data.amount,
         source=data.source,
@@ -42,6 +53,15 @@ async def assign_transaction(
 
     if transaction.status != PaymentStatus.UNASSIGNED:
         raise ValueError("Transaction is not unassigned")
+
+    from app.models.domain import Student
+    student_result = await db.execute(select(Student).where(Student.id == student_id))
+    if not student_result.scalar_one_or_none():
+        raise ValueError(f"Student with ID {student_id} not found")
+
+    contract_result = await db.execute(select(Contract).where(Contract.id == contract_id))
+    if not contract_result.scalar_one_or_none():
+        raise ValueError(f"Contract with ID {contract_id} not found")
 
     transaction.student_id = student_id
     transaction.contract_id = contract_id

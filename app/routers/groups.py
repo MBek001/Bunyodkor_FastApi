@@ -42,6 +42,12 @@ async def create_group(
     data: GroupCreate,
     db: Annotated[AsyncSession, Depends(get_db)],
 ):
+    if data.coach_id:
+        from app.models.auth import User
+        coach_result = await db.execute(select(User).where(User.id == data.coach_id))
+        if not coach_result.scalar_one_or_none():
+            raise HTTPException(status_code=404, detail=f"Coach with ID {data.coach_id} not found")
+
     group = Group(**data.model_dump())
     db.add(group)
     await db.commit()
@@ -75,7 +81,15 @@ async def update_group(
     if not group:
         raise HTTPException(status_code=404, detail="Group not found")
 
-    for field, value in data.model_dump(exclude_unset=True).items():
+    update_data = data.model_dump(exclude_unset=True)
+
+    if "coach_id" in update_data and update_data["coach_id"] is not None:
+        from app.models.auth import User
+        coach_result = await db.execute(select(User).where(User.id == update_data["coach_id"]))
+        if not coach_result.scalar_one_or_none():
+            raise HTTPException(status_code=404, detail=f"Coach with ID {update_data['coach_id']} not found")
+
+    for field, value in update_data.items():
         setattr(group, field, value)
 
     await db.commit()

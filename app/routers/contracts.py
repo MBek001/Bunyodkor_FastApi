@@ -56,6 +56,11 @@ async def create_contract(
     data: ContractCreate,
     db: Annotated[AsyncSession, Depends(get_db)],
 ):
+    from app.models.domain import Student
+    student_result = await db.execute(select(Student).where(Student.id == data.student_id))
+    if not student_result.scalar_one_or_none():
+        raise HTTPException(status_code=404, detail=f"Student with ID {data.student_id} not found")
+
     contract = Contract(**data.model_dump())
     db.add(contract)
     await db.commit()

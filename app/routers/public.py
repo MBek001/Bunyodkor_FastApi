@@ -24,7 +24,10 @@ async def get_contract_info(
         raise HTTPException(status_code=404, detail="Contract not found")
 
     student_result = await db.execute(select(Student).where(Student.id == contract.student_id))
-    student = student_result.scalar_one()
+    student = student_result.scalar_one_or_none()
+
+    if not student:
+        raise HTTPException(status_code=404, detail="Student associated with this contract not found")
 
     debt = await calculate_student_debt(db, student.id)
 
