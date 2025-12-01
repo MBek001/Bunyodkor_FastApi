@@ -74,13 +74,23 @@ async def get_students(
 @router.get("/unpaid", response_model=DataResponse[list[StudentDebtInfo]], dependencies=[Depends(require_permission(PERM_STUDENTS_VIEW))])
 async def get_unpaid_students(
     db: Annotated[AsyncSession, Depends(get_db)],
+    year: Optional[int] = None,
+    month: Optional[int] = Query(None, ge=1, le=12),
     page: int = Query(1, ge=1),
     page_size: int = Query(20, ge=1, le=100),
 ):
+    """
+    Get students who haven't paid for a specific month.
+    Defaults to current month if year/month not specified.
+    """
     from app.models.domain import Contract
     from app.models.enums import ContractStatus, PaymentStatus
     from datetime import date
-    from dateutil.relativedelta import relativedelta
+
+    # Default to current month/year
+    today = date.today()
+    target_year = year if year is not None else today.year
+    target_month = month if month is not None else today.month
 
     students_query = select(Student).where(Student.status == "active")
     students_result = await db.execute(students_query)
@@ -88,6 +98,7 @@ async def get_unpaid_students(
 
     debt_info_list = []
     for student in students:
+        # Get active contracts for this student
         contracts_result = await db.execute(
             select(Contract).where(
                 Contract.student_id == student.id,
@@ -99,33 +110,40 @@ async def get_unpaid_students(
         if not contracts:
             continue
 
+        # Calculate expected payment for the target month
         total_expected = 0
         active_contracts_count = len(contracts)
 
         for contract in contracts:
-            months_elapsed = 0
-            if contract.start_date <= date.today():
-                end_date = min(contract.end_date, date.today())
-                months_elapsed = (end_date.year - contract.start_date.year) * 12 + (end_date.month - contract.start_date.month) + 1
+            # Check if contract covers the target month
+            target_date = date(target_year, target_month, 1)
+            if contract.start_date <= target_date <= contract.end_date:
+                total_expected += float(contract.monthly_fee)
 
-            total_expected += float(contract.monthly_fee) * months_elapsed
+        # If no contracts cover this month, skip
+        if total_expected == 0:
+            continue
 
+        # Check if student has paid for this specific month
         transactions_result = await db.execute(
             select(func.sum(Transaction.amount)).where(
                 Transaction.student_id == student.id,
-                Transaction.status == PaymentStatus.SUCCESS
+                Transaction.status == PaymentStatus.SUCCESS,
+                Transaction.payment_year == target_year,
+                Transaction.payment_months.contains([target_month])
             )
         )
-        total_paid = transactions_result.scalar() or 0
-        total_paid = float(total_paid)
+        month_paid = transactions_result.scalar() or 0
+        month_paid = float(month_paid)
 
-        debt_amount = total_expected - total_paid
+        # Calculate debt for this specific month
+        debt_amount = total_expected - month_paid
 
         if debt_amount > 0:
             debt_info_list.append(StudentDebtInfo(
                 student=StudentRead.model_validate(student),
                 total_expected=total_expected,
-                total_paid=total_paid,
+                total_paid=month_paid,
                 debt_amount=debt_amount,
                 active_contracts_count=active_contracts_count
             ))

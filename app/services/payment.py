@@ -12,23 +12,31 @@ async def create_manual_transaction(
     data: ManualTransactionCreate,
     user_id: int,
 ) -> Transaction:
-    if data.student_id:
-        from app.models.domain import Student
-        student_result = await db.execute(select(Student).where(Student.id == data.student_id))
-        if not student_result.scalar_one_or_none():
-            raise ValueError(f"Student with ID {data.student_id} not found")
+    # Find contract by contract_number
+    contract_result = await db.execute(
+        select(Contract).where(Contract.contract_number == data.contract_number)
+    )
+    contract = contract_result.scalar_one_or_none()
 
-    if data.contract_id:
-        contract_result = await db.execute(select(Contract).where(Contract.id == data.contract_id))
-        if not contract_result.scalar_one_or_none():
-            raise ValueError(f"Contract with ID {data.contract_id} not found")
+    if not contract:
+        raise ValueError(f"Contract with number '{data.contract_number}' not found")
+
+    # Validate payment months
+    if not data.payment_months:
+        raise ValueError("Payment months are required")
+
+    for month in data.payment_months:
+        if month < 1 or month > 12:
+            raise ValueError(f"Invalid month: {month}. Must be between 1 and 12")
 
     transaction = Transaction(
         amount=data.amount,
         source=data.source,
         status=PaymentStatus.SUCCESS,
-        student_id=data.student_id,
-        contract_id=data.contract_id,
+        student_id=contract.student_id,
+        contract_id=contract.id,
+        payment_year=data.payment_year,
+        payment_months=data.payment_months,
         comment=data.comment,
         paid_at=data.paid_at or datetime.utcnow(),
         created_by_user_id=user_id,

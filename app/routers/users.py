@@ -7,7 +7,7 @@ from app.core.db import get_db
 from app.core.security import hash_password
 from app.core.permissions import PERM_USERS_MANAGE
 from app.models.auth import User, Role
-from app.schemas.auth import UserRead, UserCreate, UserUpdate, UserRolesUpdate, UserWithRoles
+from app.schemas.auth import UserRead, UserCreate, UserUpdate, UserRolesUpdate, UserWithRoles, CoachWithGroups
 from app.schemas.common import DataResponse, PaginationMeta
 from app.deps import require_permission
 
@@ -43,17 +43,41 @@ async def get_users(
     )
 
 
-@router.get("/coaches", response_model=DataResponse[list[UserRead]])
+@router.get("/coaches", response_model=DataResponse[list[CoachWithGroups]])
 async def get_coaches(
     db: Annotated[AsyncSession, Depends(get_db)],
 ):
-    """Get all users who can be assigned as coaches (all active users)"""
+    """Get all active users with their assigned groups"""
     from app.models.enums import UserStatus
+    from app.models.domain import Group
+    from app.schemas.group import GroupRead
+
     result = await db.execute(
         select(User).where(User.status == UserStatus.ACTIVE)
     )
-    coaches = result.scalars().all()
-    return DataResponse(data=[UserRead.model_validate(u) for u in coaches])
+    users = result.scalars().all()
+
+    coaches_with_groups = []
+    for user in users:
+        # Get groups assigned to this coach
+        groups_result = await db.execute(
+            select(Group).where(Group.coach_id == user.id)
+        )
+        groups = groups_result.scalars().all()
+
+        coach_data = CoachWithGroups(
+            id=user.id,
+            phone=user.phone,
+            email=user.email,
+            full_name=user.full_name,
+            is_super_admin=user.is_super_admin,
+            status=user.status,
+            created_at=user.created_at,
+            groups=[GroupRead.model_validate(g) for g in groups]
+        )
+        coaches_with_groups.append(coach_data)
+
+    return DataResponse(data=coaches_with_groups)
 
 
 @router.post("", response_model=DataResponse[UserRead], dependencies=[Depends(require_permission(PERM_USERS_MANAGE))])

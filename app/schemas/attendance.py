@@ -7,9 +7,11 @@ from app.models.enums import AttendanceStatus
 class SessionRead(BaseModel):
     id: int
     session_date: date
+    topic: Optional[str] = None
     start_time: Optional[str] = None
     end_time: Optional[str] = None
     group_id: int
+    created_by_user_id: Optional[int] = None
     created_at: datetime
 
     class Config:
@@ -18,9 +20,15 @@ class SessionRead(BaseModel):
 
 class SessionCreate(BaseModel):
     session_date: date
+    topic: Optional[str] = None
     start_time: Optional[str] = None
     end_time: Optional[str] = None
     group_id: int
+
+
+class SessionWithAttendances(SessionRead):
+    """Session with attendance records"""
+    attendances: list["AttendanceRead"] = []
 
 
 class AttendanceRead(BaseModel):
@@ -40,6 +48,21 @@ class AttendanceCreate(BaseModel):
     student_id: int
     status: AttendanceStatus
     comment: Optional[str] = None
+
+
+class BulkAttendanceCreate(BaseModel):
+    """Create multiple attendance records for a session"""
+    session_id: int
+    attendances: list[AttendanceCreate]
+
+
+class AttendanceStats(BaseModel):
+    """Attendance statistics for a student or group"""
+    total_sessions: int
+    present_count: int
+    absent_count: int
+    late_count: int
+    attendance_rate: float  # Percentage of present sessions
 
 
 class StudentWithDebtInfo(BaseModel):
