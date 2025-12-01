@@ -9,7 +9,7 @@ from app.core.permissions import PERM_USERS_MANAGE
 from app.models.auth import User, Role
 from app.schemas.auth import UserRead, UserCreate, UserUpdate, UserRolesUpdate, UserWithRoles, CoachWithGroups
 from app.schemas.common import DataResponse, PaginationMeta
-from app.deps import require_permission
+from app.deps import require_permission, CurrentUser
 
 router = APIRouter(prefix="/users", tags=["Users"])
 
@@ -45,34 +45,46 @@ async def get_users(
 
 @router.get("/coaches", response_model=DataResponse[list[CoachWithGroups]])
 async def get_coaches(
+    user: CurrentUser,
     db: Annotated[AsyncSession, Depends(get_db)],
 ):
-    """Get all active users with their assigned groups"""
+    """Get all users with 'Coach' role and their assigned groups (requires authentication)"""
     from app.models.enums import UserStatus
     from app.models.domain import Group
     from app.schemas.group import GroupRead
 
+    # Find users who have the "Coach" role
     result = await db.execute(
-        select(User).where(User.status == UserStatus.ACTIVE)
+        select(User)
+        .options(selectinload(User.roles))
+        .where(User.status == UserStatus.ACTIVE)
     )
-    users = result.scalars().all()
+    all_users = result.scalars().all()
 
     coaches_with_groups = []
-    for user in users:
+    for user_obj in all_users:
+        # Check if user has "Coach" role (case-insensitive)
+        has_coach_role = any(
+            role.name.lower() == "coach" for role in user_obj.roles
+        )
+
+        if not has_coach_role:
+            continue
+
         # Get groups assigned to this coach
         groups_result = await db.execute(
-            select(Group).where(Group.coach_id == user.id)
+            select(Group).where(Group.coach_id == user_obj.id)
         )
         groups = groups_result.scalars().all()
 
         coach_data = CoachWithGroups(
-            id=user.id,
-            phone=user.phone,
-            email=user.email,
-            full_name=user.full_name,
-            is_super_admin=user.is_super_admin,
-            status=user.status,
-            created_at=user.created_at,
+            id=user_obj.id,
+            phone=user_obj.phone,
+            email=user_obj.email,
+            full_name=user_obj.full_name,
+            is_super_admin=user_obj.is_super_admin,
+            status=user_obj.status,
+            created_at=user_obj.created_at,
             groups=[GroupRead.model_validate(g) for g in groups]
         )
         coaches_with_groups.append(coach_data)
