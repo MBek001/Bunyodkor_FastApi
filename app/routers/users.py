@@ -96,13 +96,31 @@ async def update_user(
     return DataResponse(data=UserRead.model_validate(user))
 
 
+@router.get("/{user_id}", response_model=DataResponse[UserWithRoles], dependencies=[Depends(require_permission(PERM_USERS_MANAGE))])
+async def get_user(
+    user_id: int,
+    db: Annotated[AsyncSession, Depends(get_db)],
+):
+    result = await db.execute(
+        select(User).options(selectinload(User.roles)).where(User.id == user_id)
+    )
+    user = result.scalar_one_or_none()
+
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+
+    return DataResponse(data=UserWithRoles.model_validate(user))
+
+
 @router.patch("/{user_id}/roles", response_model=DataResponse[UserWithRoles], dependencies=[Depends(require_permission(PERM_USERS_MANAGE))])
 async def update_user_roles(
     user_id: int,
     data: UserRolesUpdate,
     db: Annotated[AsyncSession, Depends(get_db)],
 ):
-    result = await db.execute(select(User).where(User.id == user_id))
+    result = await db.execute(
+        select(User).options(selectinload(User.roles)).where(User.id == user_id)
+    )
     user = result.scalar_one_or_none()
 
     if not user:
@@ -111,8 +129,31 @@ async def update_user_roles(
     roles_result = await db.execute(select(Role).where(Role.id.in_(data.role_ids)))
     roles = roles_result.scalars().all()
 
+    if len(roles) != len(data.role_ids):
+        raise HTTPException(status_code=400, detail="One or more role IDs are invalid")
+
     user.roles = roles
     await db.commit()
     await db.refresh(user, ["roles"])
 
     return DataResponse(data=UserWithRoles.model_validate(user))
+
+
+@router.delete("/{user_id}", response_model=DataResponse[dict], dependencies=[Depends(require_permission(PERM_USERS_MANAGE))])
+async def delete_user(
+    user_id: int,
+    db: Annotated[AsyncSession, Depends(get_db)],
+):
+    result = await db.execute(select(User).where(User.id == user_id))
+    user = result.scalar_one_or_none()
+
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+
+    if user.is_super_admin:
+        raise HTTPException(status_code=400, detail="Cannot delete super admin user")
+
+    await db.delete(user)
+    await db.commit()
+
+    return DataResponse(data={"message": "User deleted successfully"})

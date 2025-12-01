@@ -68,6 +68,23 @@ async def update_role(
     return DataResponse(data=RoleWithPermissions.model_validate(role))
 
 
+@router.delete("/{role_id}", response_model=DataResponse[dict], dependencies=[Depends(require_permission(PERM_ROLES_MANAGE))])
+async def delete_role(
+    role_id: int,
+    db: Annotated[AsyncSession, Depends(get_db)],
+):
+    result = await db.execute(select(Role).where(Role.id == role_id))
+    role = result.scalar_one_or_none()
+
+    if not role:
+        raise HTTPException(status_code=404, detail="Role not found")
+
+    await db.delete(role)
+    await db.commit()
+
+    return DataResponse(data={"message": "Role deleted successfully"})
+
+
 @router.get("/permissions", response_model=DataResponse[list[PermissionRead]])
 async def get_permissions(db: Annotated[AsyncSession, Depends(get_db)]):
     result = await db.execute(select(Permission))

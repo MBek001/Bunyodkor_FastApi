@@ -7,7 +7,7 @@ from app.core.permissions import PERM_STUDENTS_VIEW, PERM_STUDENTS_EDIT
 from app.models.domain import Student
 from app.models.finance import Transaction
 from app.models.attendance import Attendance, GateLog
-from app.schemas.student import StudentRead, StudentCreate, StudentUpdate
+from app.schemas.student import StudentRead, StudentCreate, StudentUpdate, StudentDebtInfo
 from app.schemas.contract import ContractRead
 from app.schemas.transaction import TransactionRead
 from app.schemas.attendance import AttendanceRead, GateLogRead
@@ -62,6 +62,82 @@ async def get_students(
 
     return DataResponse(
         data=[StudentRead.model_validate(s) for s in students],
+        meta=PaginationMeta(
+            page=page,
+            page_size=page_size,
+            total=total,
+            total_pages=(total + page_size - 1) // page_size,
+        ),
+    )
+
+
+@router.get("/unpaid", response_model=DataResponse[list[StudentDebtInfo]], dependencies=[Depends(require_permission(PERM_STUDENTS_VIEW))])
+async def get_unpaid_students(
+    db: Annotated[AsyncSession, Depends(get_db)],
+    page: int = Query(1, ge=1),
+    page_size: int = Query(20, ge=1, le=100),
+):
+    from app.models.domain import Contract
+    from app.models.enums import ContractStatus, PaymentStatus
+    from datetime import date
+    from dateutil.relativedelta import relativedelta
+
+    students_query = select(Student).where(Student.status == "active")
+    students_result = await db.execute(students_query)
+    students = students_result.scalars().all()
+
+    debt_info_list = []
+    for student in students:
+        contracts_result = await db.execute(
+            select(Contract).where(
+                Contract.student_id == student.id,
+                Contract.status == ContractStatus.ACTIVE
+            )
+        )
+        contracts = contracts_result.scalars().all()
+
+        if not contracts:
+            continue
+
+        total_expected = 0
+        active_contracts_count = len(contracts)
+
+        for contract in contracts:
+            months_elapsed = 0
+            if contract.start_date <= date.today():
+                end_date = min(contract.end_date, date.today())
+                months_elapsed = (end_date.year - contract.start_date.year) * 12 + (end_date.month - contract.start_date.month) + 1
+
+            total_expected += float(contract.monthly_fee) * months_elapsed
+
+        transactions_result = await db.execute(
+            select(func.sum(Transaction.amount)).where(
+                Transaction.student_id == student.id,
+                Transaction.status == PaymentStatus.SUCCESS
+            )
+        )
+        total_paid = transactions_result.scalar() or 0
+        total_paid = float(total_paid)
+
+        debt_amount = total_expected - total_paid
+
+        if debt_amount > 0:
+            debt_info_list.append(StudentDebtInfo(
+                student=StudentRead.model_validate(student),
+                total_expected=total_expected,
+                total_paid=total_paid,
+                debt_amount=debt_amount,
+                active_contracts_count=active_contracts_count
+            ))
+
+    debt_info_list.sort(key=lambda x: x.debt_amount, reverse=True)
+
+    offset = (page - 1) * page_size
+    paginated_list = debt_info_list[offset:offset + page_size]
+    total = len(debt_info_list)
+
+    return DataResponse(
+        data=paginated_list,
         meta=PaginationMeta(
             page=page,
             page_size=page_size,
@@ -170,3 +246,20 @@ async def get_student_gatelogs(
     result = await db.execute(select(GateLog).where(GateLog.student_id == student_id))
     logs = result.scalars().all()
     return DataResponse(data=[GateLogRead.model_validate(l) for l in logs])
+
+
+@router.delete("/{student_id}", response_model=DataResponse[dict], dependencies=[Depends(require_permission(PERM_STUDENTS_EDIT))])
+async def delete_student(
+    student_id: int,
+    db: Annotated[AsyncSession, Depends(get_db)],
+):
+    result = await db.execute(select(Student).where(Student.id == student_id))
+    student = result.scalar_one_or_none()
+
+    if not student:
+        raise HTTPException(status_code=404, detail="Student not found")
+
+    await db.delete(student)
+    await db.commit()
+
+    return DataResponse(data={"message": "Student deleted successfully"})

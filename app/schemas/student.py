@@ -74,3 +74,14 @@ class ParentUpdate(BaseModel):
     phone: Optional[str] = None
     email: Optional[str] = None
     relationship_type: Optional[str] = None
+
+
+class StudentDebtInfo(BaseModel):
+    student: StudentRead
+    total_expected: float
+    total_paid: float
+    debt_amount: float
+    active_contracts_count: int
+
+    class Config:
+        from_attributes = True

@@ -66,6 +66,8 @@ async def assign_transaction(
     transaction.student_id = student_id
     transaction.contract_id = contract_id
     transaction.status = PaymentStatus.SUCCESS
+    if not transaction.paid_at:
+        transaction.paid_at = datetime.utcnow()
 
     await db.commit()
     await db.refresh(transaction)
