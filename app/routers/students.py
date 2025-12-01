@@ -1,7 +1,8 @@
 from typing import Annotated, Optional
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, func, or_
+from sqlalchemy import select, func, or_, cast
+from sqlalchemy.dialects.postgresql import JSONB
 from app.core.db import get_db
 from app.core.permissions import PERM_STUDENTS_VIEW, PERM_STUDENTS_EDIT
 from app.models.domain import Student
@@ -205,12 +206,13 @@ async def get_unpaid_students(
             continue
 
         # Check if student has paid for this specific month
+        # Use PostgreSQL @> operator to check if JSON array contains the target month
         transactions_result = await db.execute(
             select(func.sum(Transaction.amount)).where(
                 Transaction.student_id == student.id,
                 Transaction.status == PaymentStatus.SUCCESS,
                 Transaction.payment_year == target_year,
-                Transaction.payment_months.contains([target_month])
+                Transaction.payment_months.op('@>')(cast([target_month], JSONB))
             )
         )
         month_paid = transactions_result.scalar() or 0
