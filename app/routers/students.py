@@ -7,7 +7,7 @@ from app.core.permissions import PERM_STUDENTS_VIEW, PERM_STUDENTS_EDIT
 from app.models.domain import Student
 from app.models.finance import Transaction
 from app.models.attendance import Attendance, GateLog
-from app.schemas.student import StudentRead, StudentCreate, StudentUpdate, StudentDebtInfo
+from app.schemas.student import StudentRead, StudentCreate, StudentUpdate, StudentDebtInfo, StudentFullInfo, ParentRead
 from app.schemas.contract import ContractRead
 from app.schemas.transaction import TransactionRead
 from app.schemas.attendance import AttendanceRead, GateLogRead
@@ -15,6 +15,86 @@ from app.schemas.common import DataResponse, PaginationMeta
 from app.deps import require_permission
 
 router = APIRouter(prefix="/students", tags=["Students"])
+
+
+@router.get("/search", response_model=DataResponse[list[StudentRead]], dependencies=[Depends(require_permission(PERM_STUDENTS_VIEW))])
+async def search_students(
+    db: Annotated[AsyncSession, Depends(get_db)],
+    query: str = Query(..., description="Search by first name, last name, contract number, phone, or parent email"),
+    page: int = Query(1, ge=1),
+    page_size: int = Query(20, ge=1, le=100),
+):
+    """
+    Comprehensive search for students by:
+    - First name
+    - Last name
+    - Contract number
+    - Phone number
+    - Parent email
+    """
+    from app.models.domain import Contract, Parent
+
+    # Search students by name or phone
+    students_query = select(Student).where(
+        or_(
+            Student.first_name.ilike(f"%{query}%"),
+            Student.last_name.ilike(f"%{query}%"),
+            Student.phone.ilike(f"%{query}%"),
+        )
+    ).distinct()
+
+    # Search by contract number
+    contracts_result = await db.execute(
+        select(Contract.student_id).where(Contract.contract_number.ilike(f"%{query}%"))
+    )
+    student_ids_from_contracts = [row[0] for row in contracts_result.fetchall()]
+
+    # Search by parent email
+    parents_result = await db.execute(
+        select(Parent.student_id).where(Parent.email.ilike(f"%{query}%"))
+    )
+    student_ids_from_parents = [row[0] for row in parents_result.fetchall()]
+
+    # Combine all student IDs
+    all_student_ids = set(student_ids_from_contracts + student_ids_from_parents)
+
+    # If we found students via contracts or parents, add them to the query
+    if all_student_ids:
+        students_query = select(Student).where(
+            or_(
+                Student.first_name.ilike(f"%{query}%"),
+                Student.last_name.ilike(f"%{query}%"),
+                Student.phone.ilike(f"%{query}%"),
+                Student.id.in_(all_student_ids)
+            )
+        ).distinct()
+
+    # Apply pagination
+    offset = (page - 1) * page_size
+    result = await db.execute(students_query.offset(offset).limit(page_size))
+    students = result.scalars().all()
+
+    # Count total results
+    count_query = select(func.count(Student.id.distinct())).where(
+        or_(
+            Student.first_name.ilike(f"%{query}%"),
+            Student.last_name.ilike(f"%{query}%"),
+            Student.phone.ilike(f"%{query}%"),
+            Student.id.in_(all_student_ids) if all_student_ids else False
+        )
+    )
+    count_result = await db.execute(count_query)
+    total = count_result.scalar() or 0
+
+    return DataResponse(
+        data=[StudentRead.model_validate(s) for s in students],
+        meta=PaginationMeta(
+            page=page,
+            page_size=page_size,
+            total=total,
+            total_pages=(total + page_size - 1) // page_size if total > 0 else 0,
+        ),
+    )
 
 
 @router.get("", response_model=DataResponse[list[StudentRead]], dependencies=[Depends(require_permission(PERM_STUDENTS_VIEW))])
@@ -200,6 +280,82 @@ async def get_student(
         raise HTTPException(status_code=404, detail="Student not found")
 
     return DataResponse(data=StudentRead.model_validate(student))
+
+
+@router.get("/fullinfo/{student_id}", response_model=DataResponse[StudentFullInfo], dependencies=[Depends(require_permission(PERM_STUDENTS_VIEW))])
+async def get_student_full_info(
+    student_id: int,
+    db: Annotated[AsyncSession, Depends(get_db)],
+):
+    """
+    Get complete student information including:
+    - Student details
+    - Parents
+    - Contracts
+    - Group
+    - Coach (teacher)
+    - Payment history (transactions)
+    - Attendance records
+    """
+    from app.models.domain import Contract, Parent, Group
+    from app.models.auth import User
+    from sqlalchemy.orm import selectinload
+
+    # Fetch student
+    student_result = await db.execute(select(Student).where(Student.id == student_id))
+    student = student_result.scalar_one_or_none()
+
+    if not student:
+        raise HTTPException(status_code=404, detail="Student not found")
+
+    # Fetch parents
+    parents_result = await db.execute(select(Parent).where(Parent.student_id == student_id))
+    parents = parents_result.scalars().all()
+
+    # Fetch contracts
+    contracts_result = await db.execute(select(Contract).where(Contract.student_id == student_id))
+    contracts = contracts_result.scalars().all()
+
+    # Fetch group and coach if student has a group
+    group = None
+    coach = None
+    if student.group_id:
+        group_result = await db.execute(select(Group).where(Group.id == student.group_id))
+        group = group_result.scalar_one_or_none()
+
+        if group and group.coach_id:
+            coach_result = await db.execute(
+                select(User).where(User.id == group.coach_id)
+            )
+            coach = coach_result.scalar_one_or_none()
+
+    # Fetch transactions
+    transactions_result = await db.execute(
+        select(Transaction).where(Transaction.student_id == student_id).order_by(Transaction.created_at.desc())
+    )
+    transactions = transactions_result.scalars().all()
+
+    # Fetch attendance records
+    attendances_result = await db.execute(
+        select(Attendance).where(Attendance.student_id == student_id).order_by(Attendance.created_at.desc())
+    )
+    attendances = attendances_result.scalars().all()
+
+    # Build the full info response
+    from app.schemas.group import GroupRead
+    from app.schemas.auth import UserRead
+
+    full_info = StudentFullInfo(
+        student=StudentRead.model_validate(student),
+        parents=[ParentRead.model_validate(p) for p in parents],
+        contracts=[ContractRead.model_validate(c) for c in contracts],
+        group=GroupRead.model_validate(group) if group else None,
+        coach=UserRead.model_validate(coach) if coach else None,
+        transactions=[TransactionRead.model_validate(t) for t in transactions],
+        attendances=[AttendanceRead.model_validate(a) for a in attendances],
+    )
+
+    return DataResponse(data=full_info)
 
 
 @router.patch("/{student_id}", response_model=DataResponse[StudentRead], dependencies=[Depends(require_permission(PERM_STUDENTS_EDIT))])

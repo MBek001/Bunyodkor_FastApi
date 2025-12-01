@@ -85,3 +85,22 @@ class StudentDebtInfo(BaseModel):
 
     class Config:
         from_attributes = True
+
+
+# Import related schemas at the end to avoid circular imports
+from app.schemas.contract import ContractRead
+from app.schemas.transaction import TransactionRead
+from app.schemas.attendance import AttendanceRead
+from app.schemas.group import GroupRead
+from app.schemas.auth import UserRead
+
+
+class StudentFullInfo(BaseModel):
+    """Complete student information including all related data"""
+    student: StudentRead
+    parents: list[ParentRead]
+    contracts: list[ContractRead]
+    group: Optional[GroupRead] = None
+    coach: Optional[UserRead] = None
+    transactions: list[TransactionRead]
+    attendances: list[AttendanceRead]
