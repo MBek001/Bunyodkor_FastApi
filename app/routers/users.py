@@ -43,14 +43,32 @@ async def get_users(
     )
 
 
+@router.get("/coaches", response_model=DataResponse[list[UserRead]])
+async def get_coaches(
+    db: Annotated[AsyncSession, Depends(get_db)],
+):
+    """Get all users who can be assigned as coaches (all active users)"""
+    from app.models.enums import UserStatus
+    result = await db.execute(
+        select(User).where(User.status == UserStatus.ACTIVE)
+    )
+    coaches = result.scalars().all()
+    return DataResponse(data=[UserRead.model_validate(u) for u in coaches])
+
+
 @router.post("", response_model=DataResponse[UserRead], dependencies=[Depends(require_permission(PERM_USERS_MANAGE))])
 async def create_user(
     data: UserCreate,
     db: Annotated[AsyncSession, Depends(get_db)],
 ):
-    existing = await db.execute(select(User).where(User.phone == data.phone))
-    if existing.scalar_one_or_none():
+    existing_phone = await db.execute(select(User).where(User.phone == data.phone))
+    if existing_phone.scalar_one_or_none():
         raise HTTPException(status_code=400, detail="Phone already registered")
+
+    if data.email:
+        existing_email = await db.execute(select(User).where(User.email == data.email))
+        if existing_email.scalar_one_or_none():
+            raise HTTPException(status_code=400, detail="This email is already registered")
 
     user = User(
         phone=data.phone,
@@ -80,9 +98,17 @@ async def update_user(
         raise HTTPException(status_code=404, detail="User not found")
 
     if data.phone:
+        existing_phone = await db.execute(select(User).where(User.phone == data.phone, User.id != user_id))
+        if existing_phone.scalar_one_or_none():
+            raise HTTPException(status_code=400, detail="Phone already registered")
         user.phone = data.phone
+
     if data.email:
+        existing_email = await db.execute(select(User).where(User.email == data.email, User.id != user_id))
+        if existing_email.scalar_one_or_none():
+            raise HTTPException(status_code=400, detail="This email is already registered")
         user.email = data.email
+
     if data.full_name:
         user.full_name = data.full_name
     if data.password:

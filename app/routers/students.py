@@ -152,6 +152,11 @@ async def create_student(
     data: StudentCreate,
     db: Annotated[AsyncSession, Depends(get_db)],
 ):
+    if data.face_id:
+        existing_face_id = await db.execute(select(Student).where(Student.face_id == data.face_id))
+        if existing_face_id.scalar_one_or_none():
+            raise HTTPException(status_code=400, detail="Face ID already exists. Please use a unique Face ID")
+
     if data.group_id:
         from app.models.domain import Group
         group_result = await db.execute(select(Group).where(Group.id == data.group_id))
@@ -192,6 +197,13 @@ async def update_student(
         raise HTTPException(status_code=404, detail="Student not found")
 
     update_data = data.model_dump(exclude_unset=True)
+
+    if "face_id" in update_data and update_data["face_id"] is not None:
+        existing_face_id = await db.execute(
+            select(Student).where(Student.face_id == update_data["face_id"], Student.id != student_id)
+        )
+        if existing_face_id.scalar_one_or_none():
+            raise HTTPException(status_code=400, detail="Face ID already exists. Please use a unique Face ID")
 
     if "group_id" in update_data and update_data["group_id"] is not None:
         from app.models.domain import Group
