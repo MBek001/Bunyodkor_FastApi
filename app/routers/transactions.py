@@ -102,6 +102,20 @@ async def get_unassigned_transactions(
     )
 
 
+@router.get("/{transaction_id}", response_model=DataResponse[TransactionRead], dependencies=[Depends(require_permission(PERM_FINANCE_TRANSACTIONS_VIEW))])
+async def get_transaction(
+    transaction_id: int,
+    db: Annotated[AsyncSession, Depends(get_db)],
+):
+    result = await db.execute(select(Transaction).where(Transaction.id == transaction_id))
+    transaction = result.scalar_one_or_none()
+
+    if not transaction:
+        raise HTTPException(status_code=404, detail="Transaction not found")
+
+    return DataResponse(data=TransactionRead.model_validate(transaction))
+
+
 @router.post("/manual", response_model=DataResponse[TransactionRead], dependencies=[Depends(require_permission(PERM_FINANCE_TRANSACTIONS_MANUAL))])
 async def create_manual_transaction_endpoint(
     data: ManualTransactionCreate,
@@ -135,3 +149,20 @@ async def cancel_transaction_endpoint(
         return DataResponse(data=TransactionRead.model_validate(transaction))
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
+
+
+@router.delete("/{transaction_id}", response_model=DataResponse[dict], dependencies=[Depends(require_permission(PERM_FINANCE_TRANSACTIONS_CANCEL))])
+async def delete_transaction(
+    transaction_id: int,
+    db: Annotated[AsyncSession, Depends(get_db)],
+):
+    result = await db.execute(select(Transaction).where(Transaction.id == transaction_id))
+    transaction = result.scalar_one_or_none()
+
+    if not transaction:
+        raise HTTPException(status_code=404, detail="Transaction not found")
+
+    await db.delete(transaction)
+    await db.commit()
+
+    return DataResponse(data={"message": "Transaction deleted successfully"})

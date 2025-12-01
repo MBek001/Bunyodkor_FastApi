@@ -105,3 +105,20 @@ async def get_group_students(
     result = await db.execute(select(Student).where(Student.group_id == group_id))
     students = result.scalars().all()
     return DataResponse(data=[StudentRead.model_validate(s) for s in students])
+
+
+@router.delete("/{group_id}", response_model=DataResponse[dict], dependencies=[Depends(require_permission(PERM_GROUPS_EDIT))])
+async def delete_group(
+    group_id: int,
+    db: Annotated[AsyncSession, Depends(get_db)],
+):
+    result = await db.execute(select(Group).where(Group.id == group_id))
+    group = result.scalar_one_or_none()
+
+    if not group:
+        raise HTTPException(status_code=404, detail="Group not found")
+
+    await db.delete(group)
+    await db.commit()
+
+    return DataResponse(data={"message": "Group deleted successfully"})

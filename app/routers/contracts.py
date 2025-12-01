@@ -17,6 +17,7 @@ async def get_contracts(
     db: Annotated[AsyncSession, Depends(get_db)],
     status: Optional[str] = None,
     student_id: Optional[int] = None,
+    contract_number: Optional[str] = None,
     page: int = Query(1, ge=1),
     page_size: int = Query(20, ge=1, le=100),
 ):
@@ -26,6 +27,8 @@ async def get_contracts(
         query = query.where(Contract.status == status)
     if student_id:
         query = query.where(Contract.student_id == student_id)
+    if contract_number:
+        query = query.where(Contract.contract_number.ilike(f"%{contract_number}%"))
 
     offset = (page - 1) * page_size
     result = await db.execute(query.offset(offset).limit(page_size))
@@ -36,6 +39,8 @@ async def get_contracts(
         count_query = count_query.where(Contract.status == status)
     if student_id:
         count_query = count_query.where(Contract.student_id == student_id)
+    if contract_number:
+        count_query = count_query.where(Contract.contract_number.ilike(f"%{contract_number}%"))
 
     count_result = await db.execute(count_query)
     total = count_result.scalar()
@@ -68,6 +73,20 @@ async def create_contract(
     return DataResponse(data=ContractRead.model_validate(contract))
 
 
+@router.get("/{contract_id}", response_model=DataResponse[ContractRead], dependencies=[Depends(require_permission(PERM_CONTRACTS_VIEW))])
+async def get_contract(
+    contract_id: int,
+    db: Annotated[AsyncSession, Depends(get_db)],
+):
+    result = await db.execute(select(Contract).where(Contract.id == contract_id))
+    contract = result.scalar_one_or_none()
+
+    if not contract:
+        raise HTTPException(status_code=404, detail="Contract not found")
+
+    return DataResponse(data=ContractRead.model_validate(contract))
+
+
 @router.patch("/{contract_id}", response_model=DataResponse[ContractRead], dependencies=[Depends(require_permission(PERM_CONTRACTS_EDIT))])
 async def update_contract(
     contract_id: int,
@@ -86,3 +105,20 @@ async def update_contract(
     await db.commit()
     await db.refresh(contract)
     return DataResponse(data=ContractRead.model_validate(contract))
+
+
+@router.delete("/{contract_id}", response_model=DataResponse[dict], dependencies=[Depends(require_permission(PERM_CONTRACTS_EDIT))])
+async def delete_contract(
+    contract_id: int,
+    db: Annotated[AsyncSession, Depends(get_db)],
+):
+    result = await db.execute(select(Contract).where(Contract.id == contract_id))
+    contract = result.scalar_one_or_none()
+
+    if not contract:
+        raise HTTPException(status_code=404, detail="Contract not found")
+
+    await db.delete(contract)
+    await db.commit()
+
+    return DataResponse(data={"message": "Contract deleted successfully"})
