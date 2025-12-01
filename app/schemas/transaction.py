@@ -12,6 +12,8 @@ class TransactionRead(BaseModel):
     status: PaymentStatus
     paid_at: Optional[datetime] = None
     comment: Optional[str] = None
+    payment_year: Optional[int] = None
+    payment_months: Optional[list[int]] = None
     student_id: Optional[int] = None
     contract_id: Optional[int] = None
     created_by_user_id: Optional[int] = None
@@ -45,7 +47,8 @@ class TransactionAssign(BaseModel):
 class ManualTransactionCreate(BaseModel):
     amount: float
     source: PaymentSource
-    student_id: int
-    contract_id: int
+    contract_number: str
+    payment_year: int
+    payment_months: list[int]  # List of months (1-12) this payment covers
     comment: Optional[str] = None
     paid_at: Optional[datetime] = None

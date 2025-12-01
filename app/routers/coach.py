@@ -2,13 +2,18 @@ from typing import Annotated, Optional
 from datetime import date
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, and_
+from sqlalchemy import select, and_, func
+from sqlalchemy.orm import selectinload
+from app.models.enums import AttendanceStatus
 from app.core.db import get_db
 from app.core.permissions import PERM_ATTENDANCE_COACH_MARK
 from app.models.domain import Group, Student
 from app.models.attendance import Session, Attendance
 from app.schemas.group import GroupRead
-from app.schemas.attendance import SessionRead, AttendanceCreate, StudentWithDebtInfo
+from app.schemas.attendance import (
+    SessionRead, SessionCreate, AttendanceCreate, SessionWithAttendances,
+    StudentWithDebtInfo, BulkAttendanceCreate, AttendanceStats, AttendanceRead
+)
 from app.schemas.common import DataResponse
 from app.deps import require_permission, CurrentUser
 from app.services.debt import calculate_student_debt
@@ -105,3 +110,253 @@ async def mark_attendance(
     await db.refresh(attendance)
 
     return DataResponse(data={"message": "Attendance marked successfully", "attendance_id": attendance.id})
+
+
+@router.post("/sessions", response_model=DataResponse[SessionRead], dependencies=[Depends(require_permission(PERM_ATTENDANCE_COACH_MARK))])
+async def create_session(
+    data: SessionCreate,
+    user: CurrentUser,
+    db: Annotated[AsyncSession, Depends(get_db)],
+):
+    """Create a new session/lesson for a group"""
+    # Verify the group exists and coach has access to it
+    group_result = await db.execute(
+        select(Group).where(Group.id == data.group_id, Group.coach_id == user.id)
+    )
+    group = group_result.scalar_one_or_none()
+
+    if not group:
+        raise HTTPException(
+            status_code=404,
+            detail="Group not found or you do not have permission to create sessions for this group"
+        )
+
+    session = Session(
+        session_date=data.session_date,
+        topic=data.topic,
+        start_time=data.start_time,
+        end_time=data.end_time,
+        group_id=data.group_id,
+        created_by_user_id=user.id,
+    )
+    db.add(session)
+    await db.commit()
+    await db.refresh(session)
+
+    return DataResponse(data=SessionRead.model_validate(session))
+
+
+@router.get("/sessions/{session_id}", response_model=DataResponse[SessionWithAttendances], dependencies=[Depends(require_permission(PERM_ATTENDANCE_COACH_MARK))])
+async def get_session_details(
+    session_id: int,
+    user: CurrentUser,
+    db: Annotated[AsyncSession, Depends(get_db)],
+):
+    """Get session details with all attendance records"""
+    session_result = await db.execute(
+        select(Session)
+        .options(selectinload(Session.attendances))
+        .join(Group)
+        .where(Session.id == session_id, Group.coach_id == user.id)
+    )
+    session = session_result.scalar_one_or_none()
+
+    if not session:
+        raise HTTPException(
+            status_code=404,
+            detail="Session not found or you do not have permission to view it"
+        )
+
+    return DataResponse(data=SessionWithAttendances.model_validate(session))
+
+
+@router.post("/sessions/{session_id}/bulk-attendance", response_model=DataResponse[dict], dependencies=[Depends(require_permission(PERM_ATTENDANCE_COACH_MARK))])
+async def mark_bulk_attendance(
+    session_id: int,
+    data: BulkAttendanceCreate,
+    user: CurrentUser,
+    db: Annotated[AsyncSession, Depends(get_db)],
+):
+    """Mark attendance for multiple students at once"""
+    # Verify session exists and coach has access
+    session_result = await db.execute(
+        select(Session)
+        .join(Group)
+        .where(Session.id == session_id, Group.coach_id == user.id)
+    )
+    session = session_result.scalar_one_or_none()
+
+    if not session:
+        raise HTTPException(
+            status_code=404,
+            detail="Session not found or you do not have permission to mark attendance"
+        )
+
+    if data.session_id != session_id:
+        raise HTTPException(status_code=400, detail="Session ID mismatch")
+
+    # Create attendance records
+    attendance_records = []
+    for att_data in data.attendances:
+        # Verify student exists
+        student_result = await db.execute(select(Student).where(Student.id == att_data.student_id))
+        if not student_result.scalar_one_or_none():
+            raise HTTPException(status_code=404, detail=f"Student with ID {att_data.student_id} not found")
+
+        attendance = Attendance(
+            session_id=session_id,
+            student_id=att_data.student_id,
+            status=att_data.status,
+            comment=att_data.comment,
+            marked_by_user_id=user.id,
+        )
+        db.add(attendance)
+        attendance_records.append(attendance)
+
+    await db.commit()
+
+    return DataResponse(data={
+        "message": f"Successfully marked attendance for {len(attendance_records)} students",
+        "count": len(attendance_records)
+    })
+
+
+@router.get("/groups/{group_id}/attendance-stats", response_model=DataResponse[AttendanceStats], dependencies=[Depends(require_permission(PERM_ATTENDANCE_COACH_MARK))])
+async def get_group_attendance_stats(
+    group_id: int,
+    user: CurrentUser,
+    db: Annotated[AsyncSession, Depends(get_db)],
+    from_date: Optional[date] = None,
+    to_date: Optional[date] = None,
+):
+    """Get attendance statistics for a group"""
+    # Verify group exists and coach has access
+    group_result = await db.execute(
+        select(Group).where(Group.id == group_id, Group.coach_id == user.id)
+    )
+    group = group_result.scalar_one_or_none()
+
+    if not group:
+        raise HTTPException(
+            status_code=404,
+            detail="Group not found or you do not have permission to view statistics"
+        )
+
+    # Get all sessions for the group
+    sessions_query = select(Session).where(Session.group_id == group_id)
+    if from_date:
+        sessions_query = sessions_query.where(Session.session_date >= from_date)
+    if to_date:
+        sessions_query = sessions_query.where(Session.session_date <= to_date)
+
+    sessions_result = await db.execute(sessions_query)
+    sessions = sessions_result.scalars().all()
+    session_ids = [s.id for s in sessions]
+
+    if not session_ids:
+        return DataResponse(data=AttendanceStats(
+            total_sessions=0,
+            present_count=0,
+            absent_count=0,
+            late_count=0,
+            attendance_rate=0.0
+        ))
+
+    # Count attendance by status
+    present_count = await db.execute(
+        select(func.count(Attendance.id)).where(
+            Attendance.session_id.in_(session_ids),
+            Attendance.status == AttendanceStatus.PRESENT
+        )
+    )
+    absent_count = await db.execute(
+        select(func.count(Attendance.id)).where(
+            Attendance.session_id.in_(session_ids),
+            Attendance.status == AttendanceStatus.ABSENT
+        )
+    )
+    late_count = await db.execute(
+        select(func.count(Attendance.id)).where(
+            Attendance.session_id.in_(session_ids),
+            Attendance.status == AttendanceStatus.LATE
+        )
+    )
+
+    present = present_count.scalar() or 0
+    absent = absent_count.scalar() or 0
+    late = late_count.scalar() or 0
+    total = present + absent + late
+
+    attendance_rate = (present / total * 100) if total > 0 else 0.0
+
+    return DataResponse(data=AttendanceStats(
+        total_sessions=len(sessions),
+        present_count=present,
+        absent_count=absent,
+        late_count=late,
+        attendance_rate=round(attendance_rate, 2)
+    ))
+
+
+@router.get("/students/{student_id}/attendance-stats", response_model=DataResponse[AttendanceStats], dependencies=[Depends(require_permission(PERM_ATTENDANCE_COACH_MARK))])
+async def get_student_attendance_stats(
+    student_id: int,
+    user: CurrentUser,
+    db: Annotated[AsyncSession, Depends(get_db)],
+    from_date: Optional[date] = None,
+    to_date: Optional[date] = None,
+):
+    """Get attendance statistics for a specific student"""
+    # Verify student exists and is in one of coach's groups
+    student_result = await db.execute(
+        select(Student)
+        .join(Group)
+        .where(Student.id == student_id, Group.coach_id == user.id)
+    )
+    student = student_result.scalar_one_or_none()
+
+    if not student:
+        raise HTTPException(
+            status_code=404,
+            detail="Student not found or not in your groups"
+        )
+
+    # Get attendance records for this student
+    attendance_query = select(Attendance).where(Attendance.student_id == student_id)
+
+    if from_date or to_date:
+        attendance_query = attendance_query.join(Session)
+        if from_date:
+            attendance_query = attendance_query.where(Session.session_date >= from_date)
+        if to_date:
+            attendance_query = attendance_query.where(Session.session_date <= to_date)
+
+    attendances_result = await db.execute(attendance_query)
+    attendances = attendances_result.scalars().all()
+
+    present = sum(1 for a in attendances if a.status == AttendanceStatus.PRESENT)
+    absent = sum(1 for a in attendances if a.status == AttendanceStatus.ABSENT)
+    late = sum(1 for a in attendances if a.status == AttendanceStatus.LATE)
+    total = len(attendances)
+
+    attendance_rate = (present / total * 100) if total > 0 else 0.0
+
+    # Get total sessions count
+    sessions_query = select(func.count(Session.id)).join(Group).where(
+        Group.id == student.group_id
+    )
+    if from_date:
+        sessions_query = sessions_query.where(Session.session_date >= from_date)
+    if to_date:
+        sessions_query = sessions_query.where(Session.session_date <= to_date)
+
+    total_sessions_result = await db.execute(sessions_query)
+    total_sessions = total_sessions_result.scalar() or 0
+
+    return DataResponse(data=AttendanceStats(
+        total_sessions=total_sessions,
+        present_count=present,
+        absent_count=absent,
+        late_count=late,
+        attendance_rate=round(attendance_rate, 2)
+    ))

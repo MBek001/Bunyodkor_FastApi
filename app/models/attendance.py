@@ -11,13 +11,18 @@ class Session(Base, TimestampMixin):
 
     id: Mapped[int] = mapped_column(primary_key=True, index=True)
     session_date: Mapped[date] = mapped_column(Date, nullable=False, index=True)
+    topic: Mapped[str | None] = mapped_column(String(500), nullable=True)
     start_time: Mapped[str | None] = mapped_column(String(10), nullable=True)
     end_time: Mapped[str | None] = mapped_column(String(10), nullable=True)
 
     group_id: Mapped[int] = mapped_column(ForeignKey("groups.id", ondelete="CASCADE"), nullable=False)
+    created_by_user_id: Mapped[int | None] = mapped_column(
+        ForeignKey("users.id", ondelete="SET NULL"), nullable=True
+    )
 
     group: Mapped["Group"] = relationship("Group", back_populates="sessions")
-    attendances: Mapped[list["Attendance"]] = relationship("Attendance", back_populates="session")
+    created_by: Mapped["User"] = relationship("User")
+    attendances: Mapped[list["Attendance"]] = relationship("Attendance", back_populates="session", cascade="all, delete-orphan")
 
 
 class Attendance(Base, TimestampMixin):

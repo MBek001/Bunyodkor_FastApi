@@ -1,7 +1,10 @@
 from datetime import datetime
-from typing import Optional
+from typing import Optional, TYPE_CHECKING
 from pydantic import BaseModel, EmailStr
 from app.models.enums import UserStatus
+
+if TYPE_CHECKING:
+    from app.schemas.group import GroupRead
 
 
 class LoginRequest(BaseModel):
@@ -72,6 +75,14 @@ class UserRead(BaseModel):
 
 class UserWithRoles(UserRead):
     roles: list[RoleRead] = []
+
+
+class CoachWithGroups(UserRead):
+    """Coach user with their assigned groups"""
+    groups: list["GroupRead"] = []
+
+    class Config:
+        from_attributes = True
 
 
 class UserCreate(BaseModel):
