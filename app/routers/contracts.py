@@ -62,9 +62,32 @@ async def create_contract(
     db: Annotated[AsyncSession, Depends(get_db)],
 ):
     from app.models.domain import Student
+    from app.models.enums import ContractStatus
+
+    # Check if student exists
     student_result = await db.execute(select(Student).where(Student.id == data.student_id))
     if not student_result.scalar_one_or_none():
         raise HTTPException(status_code=404, detail=f"Student with ID {data.student_id} not found")
+
+    # Check for duplicate contract number
+    existing_contract = await db.execute(
+        select(Contract).where(Contract.contract_number == data.contract_number)
+    )
+    if existing_contract.scalar_one_or_none():
+        raise HTTPException(status_code=400, detail="This contract already exists")
+
+    # Check if student already has an active contract
+    active_contract = await db.execute(
+        select(Contract).where(
+            Contract.student_id == data.student_id,
+            Contract.status == ContractStatus.ACTIVE
+        )
+    )
+    if active_contract.scalar_one_or_none():
+        raise HTTPException(
+            status_code=400,
+            detail="This student already has an active contract. A student can only have one active contract at a time"
+        )
 
     contract = Contract(**data.model_dump())
     db.add(contract)
@@ -93,13 +116,58 @@ async def update_contract(
     data: ContractUpdate,
     db: Annotated[AsyncSession, Depends(get_db)],
 ):
+    from app.models.enums import ContractStatus
+
     result = await db.execute(select(Contract).where(Contract.id == contract_id))
     contract = result.scalar_one_or_none()
 
     if not contract:
         raise HTTPException(status_code=404, detail="Contract not found")
 
-    for field, value in data.model_dump(exclude_unset=True).items():
+    update_data = data.model_dump(exclude_unset=True)
+
+    # Check for duplicate contract number if it's being updated
+    if "contract_number" in update_data:
+        existing_contract = await db.execute(
+            select(Contract).where(
+                Contract.contract_number == update_data["contract_number"],
+                Contract.id != contract_id
+            )
+        )
+        if existing_contract.scalar_one_or_none():
+            raise HTTPException(status_code=400, detail="This contract already exists")
+
+    # Check if student already has an active contract (when changing status to ACTIVE or changing student)
+    if "status" in update_data and update_data["status"] == ContractStatus.ACTIVE:
+        active_contract = await db.execute(
+            select(Contract).where(
+                Contract.student_id == contract.student_id,
+                Contract.status == ContractStatus.ACTIVE,
+                Contract.id != contract_id
+            )
+        )
+        if active_contract.scalar_one_or_none():
+            raise HTTPException(
+                status_code=400,
+                detail="This student already has an active contract. A student can only have one active contract at a time"
+            )
+
+    if "student_id" in update_data and update_data["student_id"] != contract.student_id:
+        # Check if the new student already has an active contract (only if this contract is active)
+        if contract.status == ContractStatus.ACTIVE:
+            active_contract = await db.execute(
+                select(Contract).where(
+                    Contract.student_id == update_data["student_id"],
+                    Contract.status == ContractStatus.ACTIVE
+                )
+            )
+            if active_contract.scalar_one_or_none():
+                raise HTTPException(
+                    status_code=400,
+                    detail="The target student already has an active contract. A student can only have one active contract at a time"
+                )
+
+    for field, value in update_data.items():
         setattr(contract, field, value)
 
     await db.commit()
