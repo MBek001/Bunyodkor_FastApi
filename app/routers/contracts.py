@@ -3,6 +3,7 @@ from datetime import datetime
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, func
+from sqlalchemy.orm import selectinload
 from app.core.db import get_db
 from app.core.permissions import PERM_CONTRACTS_VIEW, PERM_CONTRACTS_EDIT
 from app.models.domain import Contract
@@ -103,7 +104,11 @@ async def get_contract(
     contract_id: int,
     db: Annotated[AsyncSession, Depends(get_db)],
 ):
-    result = await db.execute(select(Contract).where(Contract.id == contract_id))
+    result = await db.execute(
+        select(Contract)
+        .options(selectinload(Contract.terminated_by))
+        .where(Contract.id == contract_id)
+    )
     contract = result.scalar_one_or_none()
 
     if not contract:
@@ -187,6 +192,7 @@ async def terminate_contract(
     """
     Terminate a contract with reason and termination date.
     Automatically changes contract status to CANCELLED.
+    Records who terminated the contract with their full name.
     """
     result = await db.execute(select(Contract).where(Contract.id == contract_id))
     contract = result.scalar_one_or_none()
@@ -204,28 +210,33 @@ async def terminate_contract(
     contract.status = ContractStatus.CANCELLED
 
     await db.commit()
-    await db.refresh(contract)
+
+    # Refresh with terminated_by relationship
+    await db.refresh(contract, ["terminated_by"])
+
     return DataResponse(data=ContractRead.model_validate(contract))
 
 
-@router.get("/{contract_id}/payment-months", response_model=DataResponse[dict], dependencies=[Depends(require_permission(PERM_CONTRACTS_VIEW))])
+@router.get("/payment-months/{contract_number}", response_model=DataResponse[dict], dependencies=[Depends(require_permission(PERM_CONTRACTS_VIEW))])
 async def get_contract_payment_months(
-    contract_id: int,
+    contract_number: str,
     db: Annotated[AsyncSession, Depends(get_db)],
 ):
     """
     Get valid payment months for a contract based on start date and end/termination date.
+
+    Uses contract_number instead of contract_id.
 
     Payment months are calculated:
     - Starting from the month of contract start_date
     - Ending at the month of contract end_date or terminated_at (whichever is earlier)
     - Only includes months within the contract period
     """
-    result = await db.execute(select(Contract).where(Contract.id == contract_id))
+    result = await db.execute(select(Contract).where(Contract.contract_number == contract_number))
     contract = result.scalar_one_or_none()
 
     if not contract:
-        raise HTTPException(status_code=404, detail="Contract not found")
+        raise HTTPException(status_code=404, detail=f"Contract '{contract_number}' not found")
 
     # Determine the effective end date (earliest of end_date or terminated_at)
     effective_end_date = contract.end_date
