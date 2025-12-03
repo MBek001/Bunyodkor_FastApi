@@ -12,6 +12,9 @@ class ContractRead(BaseModel):
     monthly_fee: float
     status: ContractStatus
     student_id: int
+    terminated_at: Optional[datetime] = None
+    terminated_by_user_id: Optional[int] = None
+    termination_reason: Optional[str] = None
     created_at: datetime
 
     class Config:
@@ -32,3 +35,8 @@ class ContractUpdate(BaseModel):
     end_date: Optional[date] = None
     monthly_fee: Optional[float] = None
     status: Optional[ContractStatus] = None
+
+
+class ContractTerminate(BaseModel):
+    termination_reason: str
+    terminated_at: Optional[datetime] = None  # If not provided, will use current datetime

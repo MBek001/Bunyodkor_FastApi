@@ -1,13 +1,15 @@
 from typing import Annotated, Optional
+from datetime import datetime
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, func
 from app.core.db import get_db
 from app.core.permissions import PERM_CONTRACTS_VIEW, PERM_CONTRACTS_EDIT
 from app.models.domain import Contract
-from app.schemas.contract import ContractRead, ContractCreate, ContractUpdate
+from app.schemas.contract import ContractRead, ContractCreate, ContractUpdate, ContractTerminate
 from app.schemas.common import DataResponse, PaginationMeta
-from app.deps import require_permission
+from app.deps import require_permission, CurrentUser
+from app.models.enums import ContractStatus
 
 router = APIRouter(prefix="/contracts", tags=["Contracts"])
 
@@ -173,6 +175,93 @@ async def update_contract(
     await db.commit()
     await db.refresh(contract)
     return DataResponse(data=ContractRead.model_validate(contract))
+
+
+@router.post("/{contract_id}/terminate", response_model=DataResponse[ContractRead], dependencies=[Depends(require_permission(PERM_CONTRACTS_EDIT))])
+async def terminate_contract(
+    contract_id: int,
+    data: ContractTerminate,
+    user: CurrentUser,
+    db: Annotated[AsyncSession, Depends(get_db)],
+):
+    """
+    Terminate a contract with reason and termination date.
+    Automatically changes contract status to CANCELLED.
+    """
+    result = await db.execute(select(Contract).where(Contract.id == contract_id))
+    contract = result.scalar_one_or_none()
+
+    if not contract:
+        raise HTTPException(status_code=404, detail="Contract not found")
+
+    if contract.terminated_at:
+        raise HTTPException(status_code=400, detail="Contract is already terminated")
+
+    # Set termination details
+    contract.terminated_at = data.terminated_at or datetime.utcnow()
+    contract.terminated_by_user_id = user.id
+    contract.termination_reason = data.termination_reason
+    contract.status = ContractStatus.CANCELLED
+
+    await db.commit()
+    await db.refresh(contract)
+    return DataResponse(data=ContractRead.model_validate(contract))
+
+
+@router.get("/{contract_id}/payment-months", response_model=DataResponse[dict], dependencies=[Depends(require_permission(PERM_CONTRACTS_VIEW))])
+async def get_contract_payment_months(
+    contract_id: int,
+    db: Annotated[AsyncSession, Depends(get_db)],
+):
+    """
+    Get valid payment months for a contract based on start date and end/termination date.
+
+    Payment months are calculated:
+    - Starting from the month of contract start_date
+    - Ending at the month of contract end_date or terminated_at (whichever is earlier)
+    - Only includes months within the contract period
+    """
+    result = await db.execute(select(Contract).where(Contract.id == contract_id))
+    contract = result.scalar_one_or_none()
+
+    if not contract:
+        raise HTTPException(status_code=404, detail="Contract not found")
+
+    # Determine the effective end date (earliest of end_date or terminated_at)
+    effective_end_date = contract.end_date
+    if contract.terminated_at:
+        termination_date = contract.terminated_at.date()
+        if termination_date < effective_end_date:
+            effective_end_date = termination_date
+
+    # Generate list of valid payment months
+    payment_months = []
+    current_date = contract.start_date.replace(day=1)  # Start from first day of start month
+
+    while current_date <= effective_end_date:
+        payment_months.append({
+            "year": current_date.year,
+            "month": current_date.month,
+            "month_name": current_date.strftime("%B"),
+            "display": current_date.strftime("%B %Y")
+        })
+
+        # Move to next month
+        if current_date.month == 12:
+            current_date = current_date.replace(year=current_date.year + 1, month=1)
+        else:
+            current_date = current_date.replace(month=current_date.month + 1)
+
+    return DataResponse(data={
+        "contract_id": contract.id,
+        "contract_number": contract.contract_number,
+        "start_date": str(contract.start_date),
+        "end_date": str(contract.end_date),
+        "terminated_at": str(contract.terminated_at.date()) if contract.terminated_at else None,
+        "effective_end_date": str(effective_end_date),
+        "payment_months": payment_months,
+        "total_months": len(payment_months)
+    })
 
 
 @router.delete("/{contract_id}", response_model=DataResponse[dict], dependencies=[Depends(require_permission(PERM_CONTRACTS_EDIT))])
