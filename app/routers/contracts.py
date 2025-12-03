@@ -191,7 +191,7 @@ async def terminate_contract(
 ):
     """
     Terminate a contract with reason and termination date.
-    Automatically changes contract status to CANCELLED.
+    Automatically changes contract status to TERMINATED.
     Records who terminated the contract with their full name.
     """
     result = await db.execute(select(Contract).where(Contract.id == contract_id))
@@ -207,7 +207,7 @@ async def terminate_contract(
     contract.terminated_at = data.terminated_at or datetime.utcnow()
     contract.terminated_by_user_id = user.id
     contract.termination_reason = data.termination_reason
-    contract.status = ContractStatus.CANCELLED
+    contract.status = ContractStatus.TERMINATED
 
     await db.commit()
 

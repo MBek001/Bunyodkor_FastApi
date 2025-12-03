@@ -1,4 +1,4 @@
-from datetime import datetime
+from datetime import datetime, date
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 from app.models.finance import Transaction
@@ -28,6 +28,35 @@ async def create_manual_transaction(
     for month in data.payment_months:
         if month < 1 or month > 12:
             raise ValueError(f"Invalid month: {month}. Must be between 1 and 12")
+
+    # Determine the effective end date (earliest of end_date or terminated_at)
+    effective_end_date = contract.end_date
+    if contract.terminated_at:
+        termination_date = contract.terminated_at.date()
+        if termination_date < effective_end_date:
+            effective_end_date = termination_date
+
+    # Validate that payment months fall within contract period
+    for month in data.payment_months:
+        # Create date for the first day of the payment month
+        payment_date = date(data.payment_year, month, 1)
+
+        # Check if payment month is before contract start
+        contract_start_month = contract.start_date.replace(day=1)
+        if payment_date < contract_start_month:
+            raise ValueError(
+                f"Payment for {payment_date.strftime('%B %Y')} is before contract start date "
+                f"({contract.start_date}). Contract period: {contract.start_date} to {effective_end_date}"
+            )
+
+        # Check if payment month is after contract end/termination
+        contract_end_month = effective_end_date.replace(day=1)
+        if payment_date > contract_end_month:
+            termination_msg = " (terminated)" if contract.terminated_at else ""
+            raise ValueError(
+                f"Payment for {payment_date.strftime('%B %Y')} is after contract end date "
+                f"({effective_end_date}){termination_msg}. Contract period: {contract.start_date} to {effective_end_date}"
+            )
 
     transaction = Transaction(
         amount=data.amount,
