@@ -1,5 +1,5 @@
-from datetime import date
-from sqlalchemy import String, Date, Integer, Numeric, Text, Enum as SAEnum, ForeignKey
+from datetime import date, datetime
+from sqlalchemy import String, Date, DateTime, Integer, Numeric, Text, Enum as SAEnum, ForeignKey
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 from app.core.db import Base
 from app.models.base import TimestampMixin
@@ -73,7 +73,15 @@ class Contract(Base, TimestampMixin):
         SAEnum(ContractStatus, native_enum=False, length=20), default=ContractStatus.ACTIVE, nullable=False
     )
 
+    # Termination fields
+    terminated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    terminated_by_user_id: Mapped[int | None] = mapped_column(
+        ForeignKey("users.id", ondelete="SET NULL"), nullable=True
+    )
+    termination_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
+
     student_id: Mapped[int] = mapped_column(ForeignKey("students.id", ondelete="CASCADE"), nullable=False)
 
     student: Mapped["Student"] = relationship("Student", back_populates="contracts")
     transactions: Mapped[list["Transaction"]] = relationship("Transaction", back_populates="contract")
+    terminated_by: Mapped["User"] = relationship("User", foreign_keys=[terminated_by_user_id])
