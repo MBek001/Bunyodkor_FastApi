@@ -122,8 +122,11 @@ async def create_manual_transaction_endpoint(
     user: CurrentUser,
     db: Annotated[AsyncSession, Depends(get_db)],
 ):
-    transaction = await create_manual_transaction(db, data, user.id)
-    return DataResponse(data=TransactionRead.model_validate(transaction))
+    try:
+        transaction = await create_manual_transaction(db, data, user.id)
+        return DataResponse(data=TransactionRead.model_validate(transaction))
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
 
 
 @router.patch("/{transaction_id}/assign", response_model=DataResponse[TransactionRead], dependencies=[Depends(require_permission(PERM_FINANCE_UNASSIGNED_ASSIGN))])

@@ -35,8 +35,9 @@ async def get_contract_info(
         select(Transaction.paid_at)
         .where(Transaction.contract_id == contract.id, Transaction.status == PaymentStatus.SUCCESS)
         .order_by(Transaction.paid_at.desc())
+        .limit(1)
     )
-    last_payment = last_payment_result.scalar_one_or_none()
+    last_payment = last_payment_result.scalar()
 
     return PublicContractInfo(
         contract_number=contract.contract_number,
