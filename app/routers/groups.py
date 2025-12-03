@@ -122,3 +122,39 @@ async def delete_group(
     await db.commit()
 
     return DataResponse(data={"message": "Group deleted successfully"})
+
+
+@router.post("/bulk-delete", response_model=DataResponse[dict], dependencies=[Depends(require_permission(PERM_GROUPS_EDIT))])
+async def bulk_delete_groups(
+    group_ids: list[int],
+    db: Annotated[AsyncSession, Depends(get_db)],
+):
+    """Bulk delete multiple groups by their IDs"""
+    if not group_ids:
+        raise HTTPException(status_code=400, detail="No group IDs provided")
+
+    deleted_count = 0
+    errors = []
+
+    for group_id in group_ids:
+        try:
+            result = await db.execute(select(Group).where(Group.id == group_id))
+            group = result.scalar_one_or_none()
+
+            if not group:
+                errors.append({"group_id": group_id, "error": "Group not found"})
+                continue
+
+            await db.delete(group)
+            deleted_count += 1
+        except Exception as e:
+            errors.append({"group_id": group_id, "error": str(e)})
+
+    await db.commit()
+
+    return DataResponse(data={
+        "message": f"Deleted {deleted_count} group(s)",
+        "deleted_count": deleted_count,
+        "total_requested": len(group_ids),
+        "errors": errors if errors else None
+    })

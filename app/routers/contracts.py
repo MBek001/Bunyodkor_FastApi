@@ -290,3 +290,39 @@ async def delete_contract(
     await db.commit()
 
     return DataResponse(data={"message": "Contract deleted successfully"})
+
+
+@router.post("/bulk-delete", response_model=DataResponse[dict], dependencies=[Depends(require_permission(PERM_CONTRACTS_EDIT))])
+async def bulk_delete_contracts(
+    contract_ids: list[int],
+    db: Annotated[AsyncSession, Depends(get_db)],
+):
+    """Bulk delete multiple contracts by their IDs"""
+    if not contract_ids:
+        raise HTTPException(status_code=400, detail="No contract IDs provided")
+
+    deleted_count = 0
+    errors = []
+
+    for contract_id in contract_ids:
+        try:
+            result = await db.execute(select(Contract).where(Contract.id == contract_id))
+            contract = result.scalar_one_or_none()
+
+            if not contract:
+                errors.append({"contract_id": contract_id, "error": "Contract not found"})
+                continue
+
+            await db.delete(contract)
+            deleted_count += 1
+        except Exception as e:
+            errors.append({"contract_id": contract_id, "error": str(e)})
+
+    await db.commit()
+
+    return DataResponse(data={
+        "message": f"Deleted {deleted_count} contract(s)",
+        "deleted_count": deleted_count,
+        "total_requested": len(contract_ids),
+        "errors": errors if errors else None
+    })

@@ -1,8 +1,13 @@
 from typing import Annotated, Optional
 from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi.responses import StreamingResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, func, or_, cast
 from sqlalchemy.dialects.postgresql import JSONB
+from openpyxl import Workbook
+from openpyxl.styles import Font, PatternFill, Alignment
+from io import BytesIO
+from datetime import datetime
 from app.core.db import get_db
 from app.core.permissions import PERM_STUDENTS_VIEW, PERM_STUDENTS_EDIT
 from app.models.domain import Student
@@ -157,81 +162,143 @@ async def get_unpaid_students(
     db: Annotated[AsyncSession, Depends(get_db)],
     year: Optional[int] = None,
     month: Optional[int] = Query(None, ge=1, le=12),
+    months: Optional[str] = Query(None, description="Comma-separated months (e.g., '1,2,3' for Jan, Feb, Mar)"),
+    group_id: Optional[int] = None,
     page: int = Query(1, ge=1),
     page_size: int = Query(20, ge=1, le=100),
 ):
     """
-    Get students who haven't paid for a specific month.
-    Defaults to current month if year/month not specified.
+    Get students who haven't paid for specified periods.
+
+    Filters:
+    - year: Target year (defaults to current year)
+    - month: Single month to check (1-12)
+    - months: Multiple months as comma-separated string (e.g., "1,2,3")
+    - group_id: Filter by specific group
+
+    Examples:
+    - /unpaid?year=2025&month=1 - Debtors for January 2025
+    - /unpaid?year=2025&months=1,2,3 - Debtors for Jan, Feb, Mar 2025
+    - /unpaid?year=2025 - Debtors for any month in 2025
+    - /unpaid?year=2025&group_id=5 - Debtors in group 5 for 2025
     """
     from app.models.domain import Contract
     from app.models.enums import ContractStatus, PaymentStatus
     from datetime import date
 
-    # Default to current month/year
+    # Default to current year
     today = date.today()
     target_year = year if year is not None else today.year
-    target_month = month if month is not None else today.month
 
+    # Parse target months
+    target_months = []
+    if months:
+        # Parse comma-separated months
+        try:
+            target_months = [int(m.strip()) for m in months.split(',') if m.strip()]
+            # Validate months
+            for m in target_months:
+                if m < 1 or m > 12:
+                    raise HTTPException(status_code=400, detail=f"Invalid month: {m}. Must be between 1 and 12")
+        except ValueError:
+            raise HTTPException(status_code=400, detail="Invalid months format. Use comma-separated numbers (e.g., '1,2,3')")
+    elif month is not None:
+        # Single month specified
+        target_months = [month]
+    else:
+        # No months specified - check all 12 months of the year
+        target_months = list(range(1, 13))
+
+    # Build student query with filters
     students_query = select(Student).where(Student.status == "active")
+
+    if group_id:
+        students_query = students_query.where(Student.group_id == group_id)
+
     students_result = await db.execute(students_query)
     students = students_result.scalars().all()
 
     debt_info_list = []
     for student in students:
-        # Get active contracts for this student
+        # Get all contracts for this student (including terminated ones)
         contracts_result = await db.execute(
-            select(Contract).where(
-                Contract.student_id == student.id,
-                Contract.status == ContractStatus.ACTIVE
-            )
+            select(Contract).where(Contract.student_id == student.id)
         )
         contracts = contracts_result.scalars().all()
 
         if not contracts:
             continue
 
-        # Calculate expected payment for the target month
+        # Calculate debt across all target months
         total_expected = 0
-        active_contracts_count = len(contracts)
+        total_paid = 0
+        active_contracts_count = 0
 
-        for contract in contracts:
-            # Check if contract covers the target month
+        for target_month in target_months:
+            # Calculate expected payment for this month
+            month_expected = 0
             target_date = date(target_year, target_month, 1)
-            if contract.start_date <= target_date <= contract.end_date:
-                total_expected += float(contract.monthly_fee)
 
-        # If no contracts cover this month, skip
+            for contract in contracts:
+                # Determine the effective end date (earliest of end_date or terminated_at)
+                effective_end_date = contract.end_date
+                if contract.terminated_at:
+                    termination_date = contract.terminated_at.date()
+                    if termination_date < effective_end_date:
+                        effective_end_date = termination_date
+
+                # Check if contract was active during this target month
+                # Contract start month
+                contract_start_month = contract.start_date.replace(day=1)
+                contract_end_month = effective_end_date.replace(day=1)
+
+                # Check if target month falls within contract period
+                if contract_start_month <= target_date <= contract_end_month:
+                    month_expected += float(contract.monthly_fee)
+                    # Count as active if it was active in any of the target months
+                    if contract.status == ContractStatus.ACTIVE or (
+                        contract.status == ContractStatus.TERMINATED and
+                        contract.terminated_at and
+                        contract.terminated_at.date() >= target_date
+                    ):
+                        active_contracts_count = max(active_contracts_count, 1)
+
+            # Add to total expected
+            total_expected += month_expected
+
+            # Check if student has paid for this specific month
+            # Use PostgreSQL @> operator to check if JSON array contains the target month
+            transactions_result = await db.execute(
+                select(func.sum(Transaction.amount)).where(
+                    Transaction.student_id == student.id,
+                    Transaction.status == PaymentStatus.SUCCESS,
+                    Transaction.payment_year == target_year,
+                    Transaction.payment_months.op('@>')(cast([target_month], JSONB))
+                )
+            )
+            month_paid = transactions_result.scalar() or 0
+            total_paid += float(month_paid)
+
+        # If no expected payment for any month, skip
         if total_expected == 0:
             continue
 
-        # Check if student has paid for this specific month
-        # Use PostgreSQL @> operator to check if JSON array contains the target month
-        transactions_result = await db.execute(
-            select(func.sum(Transaction.amount)).where(
-                Transaction.student_id == student.id,
-                Transaction.status == PaymentStatus.SUCCESS,
-                Transaction.payment_year == target_year,
-                Transaction.payment_months.op('@>')(cast([target_month], JSONB))
-            )
-        )
-        month_paid = transactions_result.scalar() or 0
-        month_paid = float(month_paid)
+        # Calculate total debt
+        debt_amount = total_expected - total_paid
 
-        # Calculate debt for this specific month
-        debt_amount = total_expected - month_paid
-
-        if debt_amount > 0:
+        if debt_amount > 0.01:  # Only include if debt > 1 cent (avoid floating point errors)
             debt_info_list.append(StudentDebtInfo(
                 student=StudentRead.model_validate(student),
                 total_expected=total_expected,
-                total_paid=month_paid,
+                total_paid=total_paid,
                 debt_amount=debt_amount,
-                active_contracts_count=active_contracts_count
+                active_contracts_count=len([c for c in contracts if c.status == ContractStatus.ACTIVE])
             ))
 
+    # Sort by debt amount (highest first)
     debt_info_list.sort(key=lambda x: x.debt_amount, reverse=True)
 
+    # Apply pagination
     offset = (page - 1) * page_size
     paginated_list = debt_info_list[offset:offset + page_size]
     total = len(debt_info_list)
@@ -244,6 +311,213 @@ async def get_unpaid_students(
             total=total,
             total_pages=(total + page_size - 1) // page_size,
         ),
+    )
+
+
+@router.get("/unpaid/export", dependencies=[Depends(require_permission(PERM_STUDENTS_VIEW))])
+async def export_unpaid_students(
+    db: Annotated[AsyncSession, Depends(get_db)],
+    year: Optional[int] = None,
+    month: Optional[int] = Query(None, ge=1, le=12),
+    months: Optional[str] = Query(None, description="Comma-separated months (e.g., '1,2,3')"),
+    group_id: Optional[int] = None,
+):
+    """
+    Export unpaid students data to Excel file.
+
+    Same filters as /unpaid endpoint:
+    - year: Target year (defaults to current year)
+    - month: Single month to check (1-12)
+    - months: Multiple months as comma-separated string
+    - group_id: Filter by specific group
+    """
+    from app.models.domain import Contract, Group
+    from app.models.enums import ContractStatus, PaymentStatus
+    from datetime import date
+
+    # Default to current year
+    today = date.today()
+    target_year = year if year is not None else today.year
+
+    # Parse target months
+    target_months = []
+    if months:
+        try:
+            target_months = [int(m.strip()) for m in months.split(',') if m.strip()]
+            for m in target_months:
+                if m < 1 or m > 12:
+                    raise HTTPException(status_code=400, detail=f"Invalid month: {m}. Must be between 1 and 12")
+        except ValueError:
+            raise HTTPException(status_code=400, detail="Invalid months format. Use comma-separated numbers")
+    elif month is not None:
+        target_months = [month]
+    else:
+        target_months = list(range(1, 13))
+
+    # Build student query with filters
+    students_query = select(Student).where(Student.status == "active")
+
+    if group_id:
+        students_query = students_query.where(Student.group_id == group_id)
+
+    students_result = await db.execute(students_query)
+    students = students_result.scalars().all()
+
+    # Get group name for filename if filtering by group
+    group_name = ""
+    if group_id:
+        group_result = await db.execute(select(Group).where(Group.id == group_id))
+        group = group_result.scalar_one_or_none()
+        if group:
+            group_name = f"_{group.name.replace(' ', '_')}"
+
+    debt_info_list = []
+    for student in students:
+        contracts_result = await db.execute(
+            select(Contract).where(Contract.student_id == student.id)
+        )
+        contracts = contracts_result.scalars().all()
+
+        if not contracts:
+            continue
+
+        total_expected = 0
+        total_paid = 0
+
+        for target_month in target_months:
+            month_expected = 0
+            target_date = date(target_year, target_month, 1)
+
+            for contract in contracts:
+                effective_end_date = contract.end_date
+                if contract.terminated_at:
+                    termination_date = contract.terminated_at.date()
+                    if termination_date < effective_end_date:
+                        effective_end_date = termination_date
+
+                contract_start_month = contract.start_date.replace(day=1)
+                contract_end_month = effective_end_date.replace(day=1)
+
+                if contract_start_month <= target_date <= contract_end_month:
+                    month_expected += float(contract.monthly_fee)
+
+            total_expected += month_expected
+
+            transactions_result = await db.execute(
+                select(func.sum(Transaction.amount)).where(
+                    Transaction.student_id == student.id,
+                    Transaction.status == PaymentStatus.SUCCESS,
+                    Transaction.payment_year == target_year,
+                    Transaction.payment_months.op('@>')(cast([target_month], JSONB))
+                )
+            )
+            month_paid = transactions_result.scalar() or 0
+            total_paid += float(month_paid)
+
+        if total_expected == 0:
+            continue
+
+        debt_amount = total_expected - total_paid
+
+        if debt_amount > 0.01:
+            # Get group name for this student
+            student_group_name = ""
+            if student.group_id:
+                student_group_result = await db.execute(select(Group).where(Group.id == student.group_id))
+                student_group = student_group_result.scalar_one_or_none()
+                if student_group:
+                    student_group_name = student_group.name
+
+            debt_info_list.append({
+                "student_id": student.id,
+                "first_name": student.first_name,
+                "last_name": student.last_name,
+                "phone": student.phone or "",
+                "group": student_group_name,
+                "total_expected": total_expected,
+                "total_paid": total_paid,
+                "debt_amount": debt_amount,
+                "active_contracts": len([c for c in contracts if c.status == ContractStatus.ACTIVE])
+            })
+
+    # Sort by debt amount (highest first)
+    debt_info_list.sort(key=lambda x: x["debt_amount"], reverse=True)
+
+    # Create Excel workbook
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "Unpaid Students"
+
+    # Define header style
+    header_fill = PatternFill(start_color="4472C4", end_color="4472C4", fill_type="solid")
+    header_font = Font(color="FFFFFF", bold=True, size=11)
+    header_alignment = Alignment(horizontal="center", vertical="center")
+
+    # Define headers
+    headers = [
+        "ID",
+        "First Name",
+        "Last Name",
+        "Phone",
+        "Group",
+        "Expected Amount",
+        "Paid Amount",
+        "Debt Amount",
+        "Active Contracts"
+    ]
+
+    # Write headers
+    for col_num, header in enumerate(headers, 1):
+        cell = ws.cell(row=1, column=col_num, value=header)
+        cell.fill = header_fill
+        cell.font = header_font
+        cell.alignment = header_alignment
+
+    # Write data
+    for row_num, debt_info in enumerate(debt_info_list, 2):
+        ws.cell(row=row_num, column=1, value=debt_info["student_id"])
+        ws.cell(row=row_num, column=2, value=debt_info["first_name"])
+        ws.cell(row=row_num, column=3, value=debt_info["last_name"])
+        ws.cell(row=row_num, column=4, value=debt_info["phone"])
+        ws.cell(row=row_num, column=5, value=debt_info["group"])
+        ws.cell(row=row_num, column=6, value=debt_info["total_expected"])
+        ws.cell(row=row_num, column=7, value=debt_info["total_paid"])
+        ws.cell(row=row_num, column=8, value=debt_info["debt_amount"])
+        ws.cell(row=row_num, column=9, value=debt_info["active_contracts"])
+
+    # Adjust column widths
+    ws.column_dimensions['A'].width = 8
+    ws.column_dimensions['B'].width = 15
+    ws.column_dimensions['C'].width = 15
+    ws.column_dimensions['D'].width = 15
+    ws.column_dimensions['E'].width = 20
+    ws.column_dimensions['F'].width = 15
+    ws.column_dimensions['G'].width = 15
+    ws.column_dimensions['H'].width = 15
+    ws.column_dimensions['I'].width = 18
+
+    # Add summary row
+    if debt_info_list:
+        summary_row = len(debt_info_list) + 3
+        ws.cell(row=summary_row, column=1, value="TOTAL").font = Font(bold=True)
+        ws.cell(row=summary_row, column=6, value=sum(d["total_expected"] for d in debt_info_list)).font = Font(bold=True)
+        ws.cell(row=summary_row, column=7, value=sum(d["total_paid"] for d in debt_info_list)).font = Font(bold=True)
+        ws.cell(row=summary_row, column=8, value=sum(d["debt_amount"] for d in debt_info_list)).font = Font(bold=True)
+
+    # Save to BytesIO
+    excel_file = BytesIO()
+    wb.save(excel_file)
+    excel_file.seek(0)
+
+    # Generate filename
+    months_str = ",".join(map(str, target_months)) if len(target_months) <= 3 else "all"
+    filename = f"unpaid_students_{target_year}_{months_str}{group_name}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx"
+
+    # Return as streaming response
+    return StreamingResponse(
+        excel_file,
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": f"attachment; filename={filename}"}
     )
 
 
@@ -451,3 +725,39 @@ async def delete_student(
     await db.commit()
 
     return DataResponse(data={"message": "Student deleted successfully"})
+
+
+@router.post("/bulk-delete", response_model=DataResponse[dict], dependencies=[Depends(require_permission(PERM_STUDENTS_EDIT))])
+async def bulk_delete_students(
+    student_ids: list[int],
+    db: Annotated[AsyncSession, Depends(get_db)],
+):
+    """Bulk delete multiple students by their IDs"""
+    if not student_ids:
+        raise HTTPException(status_code=400, detail="No student IDs provided")
+
+    deleted_count = 0
+    errors = []
+
+    for student_id in student_ids:
+        try:
+            result = await db.execute(select(Student).where(Student.id == student_id))
+            student = result.scalar_one_or_none()
+
+            if not student:
+                errors.append({"student_id": student_id, "error": "Student not found"})
+                continue
+
+            await db.delete(student)
+            deleted_count += 1
+        except Exception as e:
+            errors.append({"student_id": student_id, "error": str(e)})
+
+    await db.commit()
+
+    return DataResponse(data={
+        "message": f"Deleted {deleted_count} student(s)",
+        "deleted_count": deleted_count,
+        "total_requested": len(student_ids),
+        "errors": errors if errors else None
+    })
