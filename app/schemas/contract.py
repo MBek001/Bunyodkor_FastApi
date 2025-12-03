@@ -4,6 +4,15 @@ from pydantic import BaseModel
 from app.models.enums import ContractStatus
 
 
+class TerminatedByUser(BaseModel):
+    """User who terminated the contract"""
+    id: int
+    full_name: str
+
+    class Config:
+        from_attributes = True
+
+
 class ContractRead(BaseModel):
     id: int
     contract_number: str
@@ -15,6 +24,7 @@ class ContractRead(BaseModel):
     terminated_at: Optional[datetime] = None
     terminated_by_user_id: Optional[int] = None
     termination_reason: Optional[str] = None
+    terminated_by: Optional[TerminatedByUser] = None
     created_at: datetime
 
     class Config:
