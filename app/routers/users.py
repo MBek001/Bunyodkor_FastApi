@@ -219,3 +219,43 @@ async def delete_user(
     await db.commit()
 
     return DataResponse(data={"message": "User deleted successfully"})
+
+
+@router.post("/bulk-delete", response_model=DataResponse[dict], dependencies=[Depends(require_permission(PERM_USERS_MANAGE))])
+async def bulk_delete_users(
+    user_ids: list[int],
+    db: Annotated[AsyncSession, Depends(get_db)],
+):
+    """Bulk delete multiple users by their IDs"""
+    if not user_ids:
+        raise HTTPException(status_code=400, detail="No user IDs provided")
+
+    deleted_count = 0
+    errors = []
+
+    for user_id in user_ids:
+        try:
+            result = await db.execute(select(User).where(User.id == user_id))
+            user = result.scalar_one_or_none()
+
+            if not user:
+                errors.append({"user_id": user_id, "error": "User not found"})
+                continue
+
+            if user.is_super_admin:
+                errors.append({"user_id": user_id, "error": "Cannot delete super admin user"})
+                continue
+
+            await db.delete(user)
+            deleted_count += 1
+        except Exception as e:
+            errors.append({"user_id": user_id, "error": str(e)})
+
+    await db.commit()
+
+    return DataResponse(data={
+        "message": f"Deleted {deleted_count} user(s)",
+        "deleted_count": deleted_count,
+        "total_requested": len(user_ids),
+        "errors": errors if errors else None
+    })

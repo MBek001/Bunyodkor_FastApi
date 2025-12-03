@@ -20,6 +20,12 @@ class Settings(BaseSettings):
     SMS_PROVIDER_API_KEY: str = ""
     SMS_PROVIDER_URL: str = ""
 
+    # Telegram Bot Configuration
+    TELEGRAM_BOT_TOKEN: str = ""
+    TELEGRAM_CHAT_ID: str = ""
+    BACKUP_ENABLED: bool = False
+    BACKUP_HOUR: int = 3  # Hour of day to run backup (0-23, default 3 AM)
+
     TIMEZONE: str = "Asia/Tashkent"
     CURRENCY: str = "UZS"
 

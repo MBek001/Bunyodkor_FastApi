@@ -122,8 +122,11 @@ async def create_manual_transaction_endpoint(
     user: CurrentUser,
     db: Annotated[AsyncSession, Depends(get_db)],
 ):
-    transaction = await create_manual_transaction(db, data, user.id)
-    return DataResponse(data=TransactionRead.model_validate(transaction))
+    try:
+        transaction = await create_manual_transaction(db, data, user.id)
+        return DataResponse(data=TransactionRead.model_validate(transaction))
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
 
 
 @router.patch("/{transaction_id}/assign", response_model=DataResponse[TransactionRead], dependencies=[Depends(require_permission(PERM_FINANCE_UNASSIGNED_ASSIGN))])
@@ -166,3 +169,39 @@ async def delete_transaction(
     await db.commit()
 
     return DataResponse(data={"message": "Transaction deleted successfully"})
+
+
+@router.post("/bulk-delete", response_model=DataResponse[dict], dependencies=[Depends(require_permission(PERM_FINANCE_TRANSACTIONS_CANCEL))])
+async def bulk_delete_transactions(
+    transaction_ids: list[int],
+    db: Annotated[AsyncSession, Depends(get_db)],
+):
+    """Bulk delete multiple transactions by their IDs"""
+    if not transaction_ids:
+        raise HTTPException(status_code=400, detail="No transaction IDs provided")
+
+    deleted_count = 0
+    errors = []
+
+    for transaction_id in transaction_ids:
+        try:
+            result = await db.execute(select(Transaction).where(Transaction.id == transaction_id))
+            transaction = result.scalar_one_or_none()
+
+            if not transaction:
+                errors.append({"transaction_id": transaction_id, "error": "Transaction not found"})
+                continue
+
+            await db.delete(transaction)
+            deleted_count += 1
+        except Exception as e:
+            errors.append({"transaction_id": transaction_id, "error": str(e)})
+
+    await db.commit()
+
+    return DataResponse(data={
+        "message": f"Deleted {deleted_count} transaction(s)",
+        "deleted_count": deleted_count,
+        "total_requested": len(transaction_ids),
+        "errors": errors if errors else None
+    })
