@@ -2,6 +2,7 @@ alembic==1.14.0
 annotated-doc==0.0.4
 annotated-types==0.7.0
 anyio==4.11.0
+APScheduler==3.10.4
 asyncpg==0.30.0
 bcrypt==4.0.1
 certifi==2025.11.12
@@ -32,6 +33,7 @@ python-dateutil==2.9.0
 python-dotenv==1.0.1
 python-jose==3.3.0
 python-multipart==0.0.20
+python-telegram-bot==21.10
 PyYAML==6.0.3
 rsa==4.9.1
 six==1.17.0
