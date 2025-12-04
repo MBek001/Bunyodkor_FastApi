@@ -1,16 +1,25 @@
 from typing import Annotated
 from fastapi import APIRouter, Depends, HTTPException
-from app.core.permissions import PERM_SUPER_ADMIN
 from app.schemas.common import DataResponse
-from app.deps import require_permission
+from app.deps import CurrentUser
 from app.services.backup import backup_service
 from app.core.config import settings
 
 router = APIRouter(prefix="/backup", tags=["Backup"])
 
 
-@router.post("/manual", response_model=DataResponse[dict], dependencies=[Depends(require_permission(PERM_SUPER_ADMIN))])
-async def trigger_manual_backup():
+def require_super_admin(user: CurrentUser) -> CurrentUser:
+    """Dependency to require super admin access."""
+    if not user.is_super_admin:
+        raise HTTPException(
+            status_code=403,
+            detail="This operation requires super admin privileges"
+        )
+    return user
+
+
+@router.post("/manual", response_model=DataResponse[dict])
+async def trigger_manual_backup(user: Annotated[CurrentUser, Depends(require_super_admin)]):
     """
     Manually trigger a database backup.
 
@@ -46,8 +55,8 @@ async def trigger_manual_backup():
         raise HTTPException(status_code=500, detail=f"Backup failed: {str(e)}")
 
 
-@router.get("/status", response_model=DataResponse[dict], dependencies=[Depends(require_permission(PERM_SUPER_ADMIN))])
-async def get_backup_status():
+@router.get("/status", response_model=DataResponse[dict])
+async def get_backup_status(user: Annotated[CurrentUser, Depends(require_super_admin)]):
     """
     Get backup configuration status.
 
