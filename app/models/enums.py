@@ -15,6 +15,7 @@ class StudentStatus(str, Enum):
 
 
 class ContractStatus(str, Enum):
+    PENDING = "pending"
     ACTIVE = "active"
     EXPIRED = "expired"
     TERMINATED = "terminated"

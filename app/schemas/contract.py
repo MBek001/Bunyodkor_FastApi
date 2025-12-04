@@ -13,6 +13,75 @@ class TerminatedByUser(BaseModel):
         from_attributes = True
 
 
+# Custom fields schemas for handwritten data
+class StudentInfo(BaseModel):
+    """Student information from application form (Image 1)"""
+    birth_year: int
+    first_name: str
+    last_name: str
+    patronymic: Optional[str] = None
+    address: str = Field(description="Full address: region, city, district, street, house, apartment")
+    phone: str
+
+
+class ParentInfo(BaseModel):
+    """Parent/Guardian information from application form (Image 1)"""
+    full_name: str = Field(description="Parent full name (father or mother)")
+    occupation: str = Field(description="Parent's occupation")
+    phone: str
+
+
+class PassportInfo(BaseModel):
+    """Passport/Document information"""
+    series_number: str = Field(description="Passport series and number (e.g., АЕ 2220863)")
+    issued_by: str = Field(description="By whom it was issued")
+    issue_date: date = Field(description="Date of issue")
+
+
+class BirthCertificateInfo(BaseModel):
+    """Student birth certificate information"""
+    full_name: str = Field(description="Student full name on certificate")
+    series: str = Field(description="Certificate series")
+    issued_by: str = Field(description="By whom it was issued")
+    issue_date: date = Field(description="Date of issue")
+
+
+class ContractTermsInfo(BaseModel):
+    """Contract terms from contract pages (Image 3)"""
+    contract_start_date: date = Field(description="Contract validity start date")
+    contract_end_date: date = Field(description="Contract validity end date")
+    monthly_fee: float = Field(description="Monthly subscription fee amount")
+
+
+class CustomerInfo(BaseModel):
+    """Customer information from signature page (Image 4)"""
+    full_name: str
+    passport_number: str
+    passport_issued_by: str
+    passport_issue_date: date
+    address: str
+    phone: str
+
+
+class ContractCustomFields(BaseModel):
+    """All custom fields from handwritten parts of contract"""
+    # From Image 1 - Application
+    student: StudentInfo
+    father: Optional[ParentInfo] = None
+    mother: Optional[ParentInfo] = None
+
+    # From Image 2 - Contract pages
+    contract_creation_date: date
+    parent_passport: PassportInfo
+    student_birth_certificate: BirthCertificateInfo
+
+    # From Image 3 - Contract terms
+    contract_terms: ContractTermsInfo
+
+    # From Image 4 - Signature page
+    customer: CustomerInfo
+
+
 class ContractRead(BaseModel):
     id: int
     contract_number: str
@@ -56,48 +125,35 @@ class ContractRead(BaseModel):
 
 
 class ContractCreateWithDocuments(BaseModel):
-    """Create contract with automatic number allocation and document uploads"""
+    """Create contract with all documents and handwritten data"""
     student_id: int
     group_id: int
-    start_date: date
-    end_date: date
-    monthly_fee: float
 
-    # Document URLs (uploaded separately first)
-    passport_copy_url: Optional[str] = None
-    form_086_url: Optional[str] = None
-    heart_checkup_url: Optional[str] = None
-    birth_certificate_url: Optional[str] = None
-    contract_images_urls: Optional[List[str]] = Field(default=None, description="List of 5 contract page image URLs")
+    # Document URLs (must be uploaded first)
+    passport_copy_url: str = Field(description="URL of passport copy document")
+    form_086_url: str = Field(description="URL of medical form 086")
+    heart_checkup_url: str = Field(description="URL of heart checkup document")
+    birth_certificate_url: str = Field(description="URL of birth certificate or passport")
+    contract_images_urls: List[str] = Field(description="List of 5 contract page image URLs")
 
-    # Admin-editable fields from handwritten parts
-    custom_fields: Optional[Dict[str, Any]] = Field(
-        default=None,
-        description="Custom fields like parent info, payment details, etc."
+    # All handwritten fields captured by admin
+    custom_fields: ContractCustomFields = Field(
+        description="All handwritten data from contract documents"
     )
 
 
-class ContractCreate(BaseModel):
-    """Legacy contract creation (kept for backwards compatibility)"""
-    contract_number: str
-    start_date: date
-    end_date: date
-    monthly_fee: float
-    status: ContractStatus = ContractStatus.ACTIVE
-    student_id: int
-
-
 class ContractUpdate(BaseModel):
+    """Update contract fields"""
     start_date: Optional[date] = None
     end_date: Optional[date] = None
     monthly_fee: Optional[float] = None
     status: Optional[ContractStatus] = None
-    custom_fields: Optional[Dict[str, Any]] = None
+    custom_fields: Optional[ContractCustomFields] = None
 
 
 class ContractTerminate(BaseModel):
     termination_reason: str
-    terminated_at: Optional[datetime] = None  # If not provided, will use current datetime
+    terminated_at: Optional[datetime] = None
 
 
 class ContractNumberInfo(BaseModel):
@@ -122,7 +178,11 @@ class NextAvailableNumber(BaseModel):
 
 class ContractCreatedResponse(BaseModel):
     """Response after creating a contract with documents"""
-    contract: ContractRead
+    contract_id: int
+    contract_number: str
+    birth_year: int
+    sequence_number: int
+    signature_token: str
     signature_link: str
     message: str
-    waiting_list: bool = False
+    status: str  # "pending_signature" or "active"
