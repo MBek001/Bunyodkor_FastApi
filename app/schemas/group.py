@@ -1,6 +1,6 @@
 from datetime import datetime
-from typing import Optional
-from pydantic import BaseModel
+from typing import Optional, Dict
+from pydantic import BaseModel, Field
 
 
 class GroupRead(BaseModel):
@@ -9,6 +9,7 @@ class GroupRead(BaseModel):
     description: Optional[str] = None
     schedule_days: Optional[str] = None
     schedule_time: Optional[str] = None
+    capacity: int = 100
     coach_id: Optional[int] = None
     created_at: datetime
 
@@ -21,6 +22,7 @@ class GroupCreate(BaseModel):
     description: Optional[str] = None
     schedule_days: Optional[str] = None
     schedule_time: Optional[str] = None
+    capacity: int = Field(default=100, ge=1, le=500, description="Maximum number of students in group")
     coach_id: Optional[int] = None
 
 
@@ -29,4 +31,22 @@ class GroupUpdate(BaseModel):
     description: Optional[str] = None
     schedule_days: Optional[str] = None
     schedule_time: Optional[str] = None
+    capacity: Optional[int] = Field(default=None, ge=1, le=500)
     coach_id: Optional[int] = None
+
+
+class GroupCapacityByYear(BaseModel):
+    """Capacity info for a specific birth year"""
+    used: int
+    available: int
+
+
+class GroupCapacityInfo(BaseModel):
+    """Detailed capacity information for a group"""
+    group_id: int
+    group_name: str
+    capacity: int
+    active_contracts: int
+    available_slots: int
+    waiting_list_count: int
+    by_birth_year: Dict[str, GroupCapacityByYear]

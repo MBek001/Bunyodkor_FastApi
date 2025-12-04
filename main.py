@@ -19,6 +19,7 @@ from app.routers import (
     public,
     import_router,
     backup,
+    waiting_list,
 )
 from app.services.backup import backup_service
 from app.core.config import settings as app_settings
@@ -105,6 +106,7 @@ app.include_router(settings.router)
 app.include_router(public.router)
 app.include_router(import_router.router)
 app.include_router(backup.router)
+app.include_router(waiting_list.router)
 
 
 if __name__ == "__main__":
