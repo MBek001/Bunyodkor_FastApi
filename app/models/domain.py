@@ -53,12 +53,14 @@ class Group(Base, TimestampMixin):
     description: Mapped[str | None] = mapped_column(Text, nullable=True)
     schedule_days: Mapped[str | None] = mapped_column(String(255), nullable=True)
     schedule_time: Mapped[str | None] = mapped_column(String(50), nullable=True)
+    capacity: Mapped[int] = mapped_column(Integer, default=100, nullable=False)  # Maximum number of students
 
     coach_id: Mapped[int | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
 
     coach: Mapped["User"] = relationship("User")
     students: Mapped[list["Student"]] = relationship("Student", back_populates="group")
     sessions: Mapped[list["Session"]] = relationship("Session", back_populates="group")
+    waiting_list: Mapped[list["WaitingList"]] = relationship("WaitingList", back_populates="group")
 
 
 class Contract(Base, TimestampMixin):
@@ -73,6 +75,26 @@ class Contract(Base, TimestampMixin):
         SAEnum(ContractStatus, native_enum=False, length=20), default=ContractStatus.ACTIVE, nullable=False
     )
 
+    # Contract number allocation fields
+    birth_year: Mapped[int] = mapped_column(Integer, nullable=False, index=True)  # Student birth year for contract numbering
+    sequence_number: Mapped[int] = mapped_column(Integer, nullable=False)  # Sequence within birth year (1-capacity)
+
+    # Document file paths (JSON array stored as text)
+    passport_copy_url: Mapped[str | None] = mapped_column(Text, nullable=True)
+    form_086_url: Mapped[str | None] = mapped_column(Text, nullable=True)  # Medical certificate
+    heart_checkup_url: Mapped[str | None] = mapped_column(Text, nullable=True)
+    birth_certificate_url: Mapped[str | None] = mapped_column(Text, nullable=True)  # Passport or birth certificate
+    contract_images_urls: Mapped[str | None] = mapped_column(Text, nullable=True)  # JSON array of 5 contract page URLs
+
+    # Digital signature
+    signature_url: Mapped[str | None] = mapped_column(Text, nullable=True)
+    signature_token: Mapped[str | None] = mapped_column(String(255), unique=True, index=True, nullable=True)  # For signing link
+    signed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    final_pdf_url: Mapped[str | None] = mapped_column(Text, nullable=True)  # Merged PDF with all documents
+
+    # Editable fields (from handwritten parts)
+    custom_fields: Mapped[str | None] = mapped_column(Text, nullable=True)  # JSON object for custom fields
+
     # Termination fields
     terminated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     terminated_by_user_id: Mapped[int | None] = mapped_column(
@@ -81,7 +103,28 @@ class Contract(Base, TimestampMixin):
     termination_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
 
     student_id: Mapped[int] = mapped_column(ForeignKey("students.id", ondelete="CASCADE"), nullable=False)
+    group_id: Mapped[int | None] = mapped_column(ForeignKey("groups.id", ondelete="SET NULL"), nullable=True)
 
     student: Mapped["Student"] = relationship("Student", back_populates="contracts")
+    group: Mapped["Group"] = relationship("Group")
     transactions: Mapped[list["Transaction"]] = relationship("Transaction", back_populates="contract")
     terminated_by: Mapped["User"] = relationship("User", foreign_keys=[terminated_by_user_id])
+
+
+class WaitingList(Base, TimestampMixin):
+    """
+    Waiting list for students when a group is full.
+    When a contract is canceled, students from the waiting list can be moved to the group.
+    """
+    __tablename__ = "waiting_list"
+
+    id: Mapped[int] = mapped_column(primary_key=True, index=True)
+    student_id: Mapped[int] = mapped_column(ForeignKey("students.id", ondelete="CASCADE"), nullable=False)
+    group_id: Mapped[int] = mapped_column(ForeignKey("groups.id", ondelete="CASCADE"), nullable=False)
+    priority: Mapped[int] = mapped_column(Integer, default=0, nullable=False)  # Higher priority = earlier in queue
+    notes: Mapped[str | None] = mapped_column(Text, nullable=True)
+    added_by_user_id: Mapped[int | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+
+    student: Mapped["Student"] = relationship("Student")
+    group: Mapped["Group"] = relationship("Group", back_populates="waiting_list")
+    added_by: Mapped["User"] = relationship("User")
