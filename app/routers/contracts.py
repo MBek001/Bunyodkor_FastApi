@@ -10,7 +10,7 @@ from app.core.db import get_db
 from app.core.permissions import PERM_CONTRACTS_VIEW, PERM_CONTRACTS_EDIT
 from app.models.domain import Contract, Student, Group, WaitingList
 from app.schemas.contract import (
-    ContractRead, ContractCreate, ContractUpdate, ContractTerminate,
+    ContractRead, ContractUpdate, ContractTerminate,
     ContractCreateWithDocuments, ContractCreatedResponse,
     ContractNumberInfo, NextAvailableNumber
 )
@@ -71,46 +71,6 @@ async def get_contracts(
             total_pages=(total + page_size - 1) // page_size,
         ),
     )
-
-
-@router.post("", response_model=DataResponse[ContractRead], dependencies=[Depends(require_permission(PERM_CONTRACTS_EDIT))])
-async def create_contract(
-    data: ContractCreate,
-    db: Annotated[AsyncSession, Depends(get_db)],
-):
-    from app.models.domain import Student
-    from app.models.enums import ContractStatus
-
-    # Check if student exists
-    student_result = await db.execute(select(Student).where(Student.id == data.student_id))
-    if not student_result.scalar_one_or_none():
-        raise HTTPException(status_code=404, detail=f"Student with ID {data.student_id} not found")
-
-    # Check for duplicate contract number
-    existing_contract = await db.execute(
-        select(Contract).where(Contract.contract_number == data.contract_number)
-    )
-    if existing_contract.scalar_one_or_none():
-        raise HTTPException(status_code=400, detail="This contract already exists")
-
-    # Check if student already has an active contract
-    active_contract = await db.execute(
-        select(Contract).where(
-            Contract.student_id == data.student_id,
-            Contract.status == ContractStatus.ACTIVE
-        )
-    )
-    if active_contract.scalar_one_or_none():
-        raise HTTPException(
-            status_code=400,
-            detail="This student already has an active contract. A student can only have one active contract at a time"
-        )
-
-    contract = Contract(**data.model_dump())
-    db.add(contract)
-    await db.commit()
-    await db.refresh(contract)
-    return DataResponse(data=ContractRead.model_validate(contract))
 
 
 @router.get("/{contract_id}", response_model=DataResponse[ContractRead], dependencies=[Depends(require_permission(PERM_CONTRACTS_VIEW))])
@@ -349,17 +309,22 @@ async def create_contract_with_documents(
     db: Annotated[AsyncSession, Depends(get_db)],
 ):
     """
-    Create a new contract with automatic number allocation and document management.
+    Create a new contract with all documents and handwritten field data.
 
-    This endpoint:
-    1. Checks if group has capacity for student's birth year
-    2. If full, adds student to waiting list
-    3. If space available, allocates contract number automatically
-    4. Creates contract with all document URLs
-    5. Generates signature token and signing link
-    6. Returns contract info with signing link
+    Workflow:
+    1. Admin uploads all documents (5 contract pages + passport + medical + heart + birth cert)
+    2. Admin enters all handwritten data from documents
+    3. System checks if group has capacity for student's birth year
+    4. If full → adds to waiting list and returns error
+    5. If space available → allocates contract number (N{seq}{year})
+    6. Creates contract in PENDING status (waiting for signature)
+    7. Generates unique signature token and signing link
+    8. Returns contract info with signing link
+    9. After signature → contract status changes to ACTIVE
+
+    All handwritten fields from 5 contract pages are captured in custom_fields.
     """
-    # Check if student exists
+    # Validate that student exists
     student_result = await db.execute(select(Student).where(Student.id == data.student_id))
     student = student_result.scalar_one_or_none()
 
@@ -376,11 +341,13 @@ async def create_contract_with_documents(
     if active_contract.scalar_one_or_none():
         raise HTTPException(
             status_code=400,
-            detail="This student already has an active contract. A student can only have one active contract at a time"
+            detail="This student already has an active contract. Only one active contract per student is allowed."
         )
 
+    # Get birth year from handwritten data (custom_fields.student.birth_year)
+    birth_year = data.custom_fields.student.birth_year
+
     # Check if group is full for this birth year
-    birth_year = student.date_of_birth.year
     group_full = await is_group_full(db, data.group_id, birth_year)
 
     if group_full:
@@ -389,7 +356,7 @@ async def create_contract_with_documents(
             student_id=data.student_id,
             group_id=data.group_id,
             priority=0,
-            notes=f"Group full for birth year {birth_year}",
+            notes=f"Group full for birth year {birth_year}. Documents uploaded and ready.",
             added_by_user_id=user.id
         )
         db.add(waiting_entry)
@@ -401,40 +368,52 @@ async def create_contract_with_documents(
             detail={
                 "message": f"Group is full for birth year {birth_year}. Student added to waiting list.",
                 "waiting_list_id": waiting_entry.id,
-                "waiting_list": True
+                "waiting_list": True,
+                "birth_year": birth_year
             }
         )
 
-    # Allocate contract number
+    # Get group for capacity check
+    group_result = await db.execute(select(Group).where(Group.id == data.group_id))
+    group = group_result.scalar_one_or_none()
+
+    if not group:
+        raise HTTPException(status_code=404, detail=f"Group with ID {data.group_id} not found")
+
+    # Allocate contract number using birth year from custom_fields
     try:
-        contract_number, birth_year_val, sequence_number = await allocate_contract_number(
-            db, data.student_id, data.group_id
-        )
+        available_numbers = await get_available_contract_numbers(db, data.group_id, birth_year)
+        if not available_numbers:
+            raise ContractNumberAllocationError(
+                f"No available contract numbers for group {group.name} and birth year {birth_year}"
+            )
+
+        sequence_number = available_numbers[0]
+        contract_number = f"N{sequence_number}{birth_year}"
     except ContractNumberAllocationError as e:
         raise HTTPException(status_code=400, detail=str(e))
 
-    # Generate signature token
+    # Generate unique signature token
     signature_token = str(uuid.uuid4())
 
-    # Convert contract_images_urls list to JSON string if provided
-    contract_images_json = None
-    if data.contract_images_urls:
-        contract_images_json = json.dumps(data.contract_images_urls)
+    # Convert data to JSON strings for storage
+    contract_images_json = json.dumps(data.contract_images_urls)
+    custom_fields_json = json.dumps(data.custom_fields.model_dump(), ensure_ascii=False, default=str)
 
-    # Convert custom_fields dict to JSON string if provided
-    custom_fields_json = None
-    if data.custom_fields:
-        custom_fields_json = json.dumps(data.custom_fields)
+    # Get dates and fee from custom_fields.contract_terms
+    start_date = data.custom_fields.contract_terms.contract_start_date
+    end_date = data.custom_fields.contract_terms.contract_end_date
+    monthly_fee = data.custom_fields.contract_terms.monthly_fee
 
-    # Create contract
+    # Create contract in PENDING status (waiting for signature)
     contract = Contract(
         contract_number=contract_number,
-        birth_year=birth_year_val,
+        birth_year=birth_year,
         sequence_number=sequence_number,
-        start_date=data.start_date,
-        end_date=data.end_date,
-        monthly_fee=data.monthly_fee,
-        status=ContractStatus.ACTIVE,
+        start_date=start_date,
+        end_date=end_date,
+        monthly_fee=monthly_fee,
+        status=ContractStatus.EXPIRED,  # Using EXPIRED as PENDING until we add PENDING status
         student_id=data.student_id,
         group_id=data.group_id,
         passport_copy_url=data.passport_copy_url,
@@ -450,14 +429,18 @@ async def create_contract_with_documents(
     await db.commit()
     await db.refresh(contract)
 
-    # Generate signing link (you can customize the base URL)
+    # Generate signing link
     signature_link = f"/signatures/sign/{signature_token}"
 
     return DataResponse(data=ContractCreatedResponse(
-        contract=ContractRead.model_validate(contract),
+        contract_id=contract.id,
+        contract_number=contract_number,
+        birth_year=birth_year,
+        sequence_number=sequence_number,
+        signature_token=signature_token,
         signature_link=signature_link,
-        message="Contract created successfully. Please sign using the provided link.",
-        waiting_list=False
+        message="Contract created successfully and ready for signature. Send the signing link to the customer.",
+        status="pending_signature"
     ))
 
 
