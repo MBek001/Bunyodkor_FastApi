@@ -1,8 +1,7 @@
 from typing import Annotated
 from fastapi import APIRouter, Depends, HTTPException
-from app.core.permissions import PERM_SETTINGS_SYSTEM_EDIT
 from app.schemas.common import DataResponse
-from app.deps import require_permission, CurrentUser
+from app.deps import CurrentUser
 from app.services.backup import backup_service
 from app.core.config import settings
 
