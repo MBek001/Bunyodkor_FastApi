@@ -1,14 +1,16 @@
 from typing import Annotated
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, func
+from sqlalchemy import select, func, and_, or_
+from collections import defaultdict
 from app.core.db import get_db
 from app.core.permissions import PERM_GROUPS_VIEW, PERM_GROUPS_EDIT
-from app.models.domain import Group, Student
-from app.schemas.group import GroupRead, GroupCreate, GroupUpdate
+from app.models.domain import Group, Student, Contract, WaitingList
+from app.schemas.group import GroupRead, GroupCreate, GroupUpdate, GroupCapacityInfo, GroupCapacityByYear
 from app.schemas.student import StudentRead
 from app.schemas.common import DataResponse, PaginationMeta
 from app.deps import require_permission
+from app.models.enums import ContractStatus
 
 router = APIRouter(prefix="/groups", tags=["Groups"])
 
@@ -158,3 +160,79 @@ async def bulk_delete_groups(
         "total_requested": len(group_ids),
         "errors": errors if errors else None
     })
+
+
+@router.get("/{group_id}/capacity", response_model=DataResponse[GroupCapacityInfo], dependencies=[Depends(require_permission(PERM_GROUPS_VIEW))])
+async def get_group_capacity(
+    group_id: int,
+    db: Annotated[AsyncSession, Depends(get_db)],
+):
+    """
+    Get detailed capacity information for a group.
+
+    Returns:
+    - Group capacity and current usage
+    - Breakdown by birth year (how many students from each birth year)
+    - Available slots
+    - Waiting list count
+
+    Useful for:
+    - Checking if group has space for new students
+    - Seeing distribution of students by birth year
+    - Managing group capacity
+    """
+    # Get group
+    group_result = await db.execute(select(Group).where(Group.id == group_id))
+    group = group_result.scalar_one_or_none()
+
+    if not group:
+        raise HTTPException(status_code=404, detail="Group not found")
+
+    # Get active and expired contracts for this group (not terminated)
+    contracts_result = await db.execute(
+        select(Contract).where(
+            and_(
+                Contract.group_id == group_id,
+                or_(
+                    Contract.status == ContractStatus.ACTIVE,
+                    Contract.status == ContractStatus.EXPIRED
+                )
+            )
+        )
+    )
+    contracts = contracts_result.scalars().all()
+
+    # Count active contracts
+    active_contracts_count = sum(1 for c in contracts if c.status == ContractStatus.ACTIVE)
+
+    # Group contracts by birth year
+    by_year = defaultdict(lambda: {"used": 0, "available": 0})
+
+    for contract in contracts:
+        by_year[contract.birth_year]["used"] += 1
+
+    # Calculate available slots for each year
+    for year_str in by_year:
+        by_year[year_str]["available"] = group.capacity - by_year[year_str]["used"]
+
+    # Get waiting list count
+    waiting_result = await db.execute(
+        select(func.count(WaitingList.id)).where(WaitingList.group_id == group_id)
+    )
+    waiting_count = waiting_result.scalar() or 0
+
+    # Convert by_year to the schema format
+    by_year_dict = {
+        str(year): GroupCapacityByYear(used=data["used"], available=data["available"])
+        for year, data in by_year.items()
+    }
+
+    return DataResponse(data=GroupCapacityInfo(
+        group_id=group_id,
+        group_name=group.name,
+        capacity=group.capacity,
+        active_contracts=active_contracts_count,
+        available_slots=group.capacity - active_contracts_count,
+        waiting_list_count=waiting_count,
+        by_birth_year=by_year_dict
+    ))
