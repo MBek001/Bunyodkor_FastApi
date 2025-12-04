@@ -413,7 +413,7 @@ async def create_contract_with_documents(
         start_date=start_date,
         end_date=end_date,
         monthly_fee=monthly_fee,
-        status=ContractStatus.EXPIRED,  # Using EXPIRED as PENDING until we add PENDING status
+        status=ContractStatus.PENDING,
         student_id=data.student_id,
         group_id=data.group_id,
         passport_copy_url=data.passport_copy_url,
