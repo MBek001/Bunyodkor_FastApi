@@ -1,18 +1,21 @@
-from typing import Annotated, Optional
+from typing import Annotated, Optional, List
 from datetime import datetime
 import json
 import uuid
-from fastapi import APIRouter, Depends, HTTPException, Query
+import os
+from fastapi import APIRouter, Depends, HTTPException, Query, UploadFile, File, Form
+from fastapi.responses import FileResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, func, and_, or_
 from sqlalchemy.orm import selectinload
 from app.core.db import get_db
 from app.core.permissions import PERM_CONTRACTS_VIEW, PERM_CONTRACTS_EDIT
+from app.core.s3 import upload_image_to_s3
 from app.models.domain import Contract, Student, Group, WaitingList
 from app.schemas.contract import (
     ContractRead, ContractUpdate, ContractTerminate,
     ContractCreateWithDocuments, ContractCreatedResponse,
-    ContractNumberInfo, NextAvailableNumber
+    ContractNumberInfo, NextAvailableNumber, ContractCustomFields
 )
 from app.schemas.common import DataResponse, PaginationMeta
 from app.schemas.waiting_list import WaitingListSimple
@@ -26,6 +29,7 @@ from app.services.contract_allocation import (
     is_group_full,
     ContractNumberAllocationError
 )
+from app.utils.pdf_generator import ContractGenerator, convert_dates
 
 router = APIRouter(prefix="/contracts", tags=["Contracts"])
 
@@ -443,6 +447,174 @@ async def create_contract_with_documents(
         message="Contract created successfully and ready for signature. Send the signing link to the customer.",
         status="pending_signature"
     ))
+
+
+@router.post("/create-with-files", response_class=FileResponse)
+async def create_contract_with_file_upload(
+    user: Annotated[User, Depends(require_permission(PERM_CONTRACTS_EDIT))],
+    db: Annotated[AsyncSession, Depends(get_db)],
+    student_id: int = Form(...),
+    group_id: int = Form(...),
+    contract_number: str = Form(...),
+    custom_fields_json: str = Form(...),
+    passport_copy: UploadFile = File(...),
+    form_086: UploadFile = File(...),
+    heart_checkup: UploadFile = File(...),
+    birth_certificate: UploadFile = File(...),
+    contract_images: List[UploadFile] = File(...)
+):
+    """
+    Create contract with direct file upload (Form + Files).
+
+    Workflow:
+    1. Receive files via Form/File upload
+    2. Upload all files to AWS S3
+    3. Create contract in database with S3 URLs
+    4. Generate PDF contract
+    5. Return PDF file directly
+
+    This endpoint is different from /create-with-documents which expects
+    pre-uploaded URLs. This one handles file upload directly.
+    """
+    # Parse custom fields
+    try:
+        custom_fields_dict = json.loads(custom_fields_json)
+        custom_fields = ContractCustomFields(**custom_fields_dict)
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"Invalid custom_fields JSON: {e}")
+
+    # Validate student
+    student_result = await db.execute(select(Student).where(Student.id == student_id))
+    student = student_result.scalar_one_or_none()
+    if not student:
+        raise HTTPException(status_code=404, detail=f"Student ID {student_id} not found")
+
+    # Check for active contract
+    active_contract = await db.execute(
+        select(Contract).where(
+            Contract.student_id == student_id,
+            Contract.status == ContractStatus.ACTIVE
+        )
+    )
+    if active_contract.scalar_one_or_none():
+        raise HTTPException(status_code=400, detail="Student already has active contract")
+
+    # Group check
+    group_result = await db.execute(select(Group).where(Group.id == group_id))
+    group = group_result.scalar_one_or_none()
+    if not group:
+        raise HTTPException(status_code=404, detail=f"Group ID {group_id} not found")
+
+    birth_year = custom_fields.student.birth_year
+
+    # Check for duplicate contract number
+    existing_contract = await db.execute(
+        select(Contract).where(Contract.contract_number == contract_number)
+    )
+    if existing_contract.scalar_one_or_none():
+        raise HTTPException(status_code=400, detail="Contract number already exists")
+
+    # Parse contract number to get sequence
+    if contract_number.startswith("N") and contract_number.endswith(str(birth_year)):
+        seq_str = contract_number[1:-len(str(birth_year))]
+        try:
+            sequence_number = int(seq_str)
+        except ValueError:
+            raise HTTPException(status_code=400, detail="Invalid contract number format")
+    else:
+        raise HTTPException(status_code=400, detail="Invalid contract number format (must be N{seq}{year})")
+
+    # Upload images to S3
+    try:
+        passport_url = upload_image_to_s3(passport_copy, folder="contracts/passports")
+        form_086_url = upload_image_to_s3(form_086, folder="contracts/medical")
+        heart_url = upload_image_to_s3(heart_checkup, folder="contracts/medical")
+        birth_cert_url = upload_image_to_s3(birth_certificate, folder="contracts/birth_certificates")
+        contract_image_urls = [upload_image_to_s3(img, folder="contracts/pages") for img in contract_images]
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to upload files to S3: {e}")
+
+    # Create contract
+    contract = Contract(
+        contract_number=contract_number,
+        birth_year=birth_year,
+        sequence_number=sequence_number,
+        start_date=custom_fields.contract_terms.contract_start_date,
+        end_date=custom_fields.contract_terms.contract_end_date,
+        monthly_fee=custom_fields.contract_terms.monthly_fee,
+        status=ContractStatus.ACTIVE,
+        student_id=student_id,
+        group_id=group_id,
+        passport_copy_url=passport_url,
+        form_086_url=form_086_url,
+        heart_checkup_url=heart_url,
+        birth_certificate_url=birth_cert_url,
+        contract_images_urls=json.dumps(contract_image_urls),
+        custom_fields=json.dumps(custom_fields.model_dump(), ensure_ascii=False, default=str),
+        signature_token=str(uuid.uuid4())
+    )
+
+    db.add(contract)
+    await db.commit()
+    await db.refresh(contract)
+
+    # Generate PDF
+    try:
+        # Create temporary directory if not exists
+        os.makedirs("temp_pdfs", exist_ok=True)
+
+        pdf_path = f"temp_pdfs/contract_{contract.contract_number}_{contract.student_id}_{contract.birth_year}.pdf"
+
+        # Prepare PDF data
+        pdf_data = {
+            "shartnoma_raqami": contract.contract_number,
+            "sana": {
+                "kun": f"{contract.start_date.day:02d}",
+                "oy": contract.start_date.strftime('%B'),
+                "yil": str(contract.start_date.year)
+            },
+            "buyurtmachi": {
+                "fio": custom_fields.customer.full_name,
+                "pasport_seriya": custom_fields.customer.passport_number,
+                "pasport_kim_bergan": custom_fields.customer.passport_issued_by,
+                "pasport_qachon_bergan": str(custom_fields.customer.passport_issue_date),
+                "manzil": custom_fields.customer.address,
+                "telefon": custom_fields.customer.phone
+            },
+            "tarbiyalanuvchi": {
+                "fio": f"{custom_fields.student.first_name} {custom_fields.student.last_name}",
+                "tugilganlik_guvohnoma": custom_fields.student_birth_certificate.series,
+                "guvohnoma_kim_bergan": custom_fields.student_birth_certificate.issued_by,
+                "guvohnoma_qachon_bergan": str(custom_fields.student_birth_certificate.issue_date)
+            },
+            "shartnoma_muddati": {
+                "boshlanish": contract.start_date.strftime('«%d» %B'),
+                "tugash": contract.end_date.strftime('«%d» %B'),
+                "yil": str(contract.start_date.year)
+            },
+            "tolov": {
+                "oylik_narx": f"{contract.monthly_fee:,}".replace(",", " "),
+                "oylik_narx_sozlar": "sum"  # You can add number-to-words conversion here
+            }
+        }
+
+        pdf_data_cleaned = convert_dates(pdf_data)
+
+        # Generate PDF
+        generator = ContractGenerator(pdf_data_cleaned)
+        pdf_generated_path = generator.generate(pdf_path)
+
+        return FileResponse(
+            path=pdf_generated_path,
+            media_type="application/pdf",
+            filename=os.path.basename(pdf_generated_path)
+        )
+
+    except Exception as e:
+        # Rollback contract creation if PDF generation fails
+        await db.delete(contract)
+        await db.commit()
+        raise HTTPException(status_code=500, detail=f"PDF generation failed: {e}")
 
 
 @router.get("/available-numbers/{group_id}/{birth_year}", response_model=DataResponse[ContractNumberInfo], dependencies=[Depends(require_permission(PERM_CONTRACTS_VIEW))])
