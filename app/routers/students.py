@@ -553,60 +553,11 @@ async def create_student_with_contract(
     user: Annotated[User, Depends(require_permission(PERM_STUDENTS_EDIT))],
     db: Annotated[AsyncSession, Depends(get_db)],
 
-    # ========== STUDENT BASIC INFO (for database) ==========
-    full_name: str = Form(..., description="Student full name (will be split to first/last name)"),
-    date_of_birth: date = Form(..., description="Student date of birth"),
-    group_id: int = Form(..., description="Group ID to assign student"),
-    phone: Optional[str] = Form(None, description="Student phone number"),
-    address: Optional[str] = Form(None, description="Student address"),
-    status: str = Form("active", description="Student status (active/inactive)"),
+    # ========== JSON DATA ==========
+    student_data: str = Form(..., description="Student data as JSON"),
+    contract_data: str = Form(..., description="Contract data as JSON"),
 
-    # ========== CONTRACT FIELDS ==========
-    contract_creation_date: date = Form(..., description="Contract creation date"),
-
-    # Customer Info (Parent/Guardian who signs contract)
-    customer_full_name: str = Form(..., description="Customer full name"),
-    customer_passport_number: str = Form(..., description="Customer passport number"),
-    customer_passport_issued_by: str = Form(..., description="Customer passport issued by"),
-    customer_passport_issue_date: date = Form(..., description="Customer passport issue date"),
-    customer_address: str = Form(..., description="Customer address"),
-    customer_phone: str = Form(..., description="Customer phone"),
-
-    # Student Info (from application form)
-    student_birth_year: int = Form(..., description="Student birth year"),
-    student_first_name: str = Form(..., description="Student first name"),
-    student_last_name: str = Form(..., description="Student last name"),
-    student_patronymic: Optional[str] = Form(None, description="Student patronymic"),
-    student_form_address: str = Form(..., description="Student address from form"),
-    student_form_phone: str = Form(..., description="Student phone from form"),
-
-    # Father Info (optional)
-    father_full_name: Optional[str] = Form(None, description="Father full name"),
-    father_occupation: Optional[str] = Form(None, description="Father occupation"),
-    father_phone: Optional[str] = Form(None, description="Father phone"),
-
-    # Mother Info (optional)
-    mother_full_name: Optional[str] = Form(None, description="Mother full name"),
-    mother_occupation: Optional[str] = Form(None, description="Mother occupation"),
-    mother_phone: Optional[str] = Form(None, description="Mother phone"),
-
-    # Parent Passport Info
-    parent_passport_series_number: str = Form(..., description="Parent passport series and number"),
-    parent_passport_issued_by: str = Form(..., description="Parent passport issued by"),
-    parent_passport_issue_date: date = Form(..., description="Parent passport issue date"),
-
-    # Student Birth Certificate Info
-    birth_cert_full_name: str = Form(..., description="Student full name on birth certificate"),
-    birth_cert_series: str = Form(..., description="Birth certificate series"),
-    birth_cert_issued_by: str = Form(..., description="Birth certificate issued by"),
-    birth_cert_issue_date: date = Form(..., description="Birth certificate issue date"),
-
-    # Contract Terms
-    contract_start_date: date = Form(..., description="Contract start date"),
-    contract_end_date: date = Form(..., description="Contract end date"),
-    monthly_fee: float = Form(..., description="Monthly subscription fee"),
-
-    # ========== DOCUMENT FILES ==========
+    # ========== DOCUMENT FILES (FormData) ==========
     passport_copy: UploadFile = File(..., description="Passport copy file"),
     form_086: UploadFile = File(..., description="Medical form 086 file"),
     heart_checkup: UploadFile = File(..., description="Heart checkup document file"),
@@ -620,21 +571,53 @@ async def create_student_with_contract(
     """
     Create student with contract and all documents in ONE operation.
 
+    **student_data JSON structure:**
+    ```json
+    {
+        "first_name": "Alvaro",
+        "last_name": "Marata",
+        "date_of_birth": "2010-12-06",
+        "phone": "998901234567",
+        "address": "Toshkent shahar",
+        "status": "active",
+        "group_id": 1
+    }
+    ```
+
+    **contract_data JSON structure:**
+    ```json
+    {
+        "buyurtmachi": {
+            "fio": "Tojiboyev Shohidbek",
+            "pasport_seriya": "AB1234567",
+            "pasport_kim_bergan": "Olmazor ROVD",
+            "pasport_qachon_bergan": "2020-01-15",
+            "manzil": "Toshkent, Chilonzor",
+            "telefon": "998901234567"
+        },
+        "tarbiyalanuvchi": {
+            "fio": "Alvaro Marata",
+            "tugilganlik_yil": 2010,
+            "tugilganlik_guvohnoma": "I-AA N1234567",
+            "guvohnoma_kim_bergan": "Toshkent RAGS",
+            "guvohnoma_qachon_bergan": "2010-12-06"
+        },
+        "shartnoma_muddati": {
+            "boshlanish": "2025-12-06",
+            "tugash": "2026-12-06"
+        },
+        "tolov": {
+            "oylik_narx": 600000
+        }
+    }
+    ```
+
     Complete workflow:
-    1. Accept student data as Form fields and 9 document files
-    2. Upload all files to AWS S3 automatically
+    1. Parse JSON data from student_data and contract_data
+    2. Upload 9 files to AWS S3 automatically
     3. Create student and contract with ACTIVE status
-    4. Generate PDF contract using uploaded document URLs
+    4. Generate PDF contract using contractdoc.py logic
     5. Return generated PDF file
-
-    This endpoint combines:
-    - Student creation
-    - Automatic file upload to S3
-    - Contract number allocation
-    - Contract creation with ACTIVE status
-    - PDF generation and download
-
-    All in one atomic operation!
     """
     from app.models.domain import Group, Contract, WaitingList
     from app.models.enums import ContractStatus, StudentStatus
@@ -646,59 +629,41 @@ async def create_student_with_contract(
     import json
     import os
     import tempfile
+    from datetime import datetime
 
-    # Build custom fields data from individual form fields
-    custom_fields_data = {
-        "contract_creation_date": str(contract_creation_date),
-        "customer": {
-            "full_name": customer_full_name,
-            "passport_number": customer_passport_number,
-            "passport_issued_by": customer_passport_issued_by,
-            "passport_issue_date": str(customer_passport_issue_date),
-            "address": customer_address,
-            "phone": customer_phone
-        },
-        "student": {
-            "birth_year": student_birth_year,
-            "first_name": student_first_name,
-            "last_name": student_last_name,
-            "patronymic": student_patronymic,
-            "address": student_form_address,
-            "phone": student_form_phone
-        },
-        "parent_passport": {
-            "series_number": parent_passport_series_number,
-            "issued_by": parent_passport_issued_by,
-            "issue_date": str(parent_passport_issue_date)
-        },
-        "student_birth_certificate": {
-            "full_name": birth_cert_full_name,
-            "series": birth_cert_series,
-            "issued_by": birth_cert_issued_by,
-            "issue_date": str(birth_cert_issue_date)
-        },
-        "contract_terms": {
-            "contract_start_date": str(contract_start_date),
-            "contract_end_date": str(contract_end_date),
-            "monthly_fee": monthly_fee
-        }
-    }
+    # Parse JSON data
+    try:
+        student_info = json.loads(student_data)
+        contract_info = json.loads(contract_data)
+    except json.JSONDecodeError as e:
+        raise HTTPException(status_code=400, detail=f"Invalid JSON: {str(e)}")
 
-    # Add father info if provided
-    if father_full_name:
-        custom_fields_data["father"] = {
-            "full_name": father_full_name,
-            "occupation": father_occupation,
-            "phone": father_phone
-        }
+    # Extract required fields from student_data
+    first_name = student_info.get("first_name")
+    last_name = student_info.get("last_name")
+    date_of_birth = student_info.get("date_of_birth")
+    phone = student_info.get("phone")
+    address = student_info.get("address")
+    status = student_info.get("status", "active")
+    group_id = student_info.get("group_id")
 
-    # Add mother info if provided
-    if mother_full_name:
-        custom_fields_data["mother"] = {
-            "full_name": mother_full_name,
-            "occupation": mother_occupation,
-            "phone": mother_phone
-        }
+    # Validate required fields
+    if not all([first_name, last_name, date_of_birth, group_id]):
+        raise HTTPException(
+            status_code=400,
+            detail="Missing required fields in student_data: first_name, last_name, date_of_birth, group_id"
+        )
+
+    # Extract contract fields
+    buyurtmachi = contract_info.get("buyurtmachi", {})
+    tarbiyalanuvchi = contract_info.get("tarbiyalanuvchi", {})
+    shartnoma_muddati = contract_info.get("shartnoma_muddati", {})
+    tolov = contract_info.get("tolov", {})
+
+    # Get birth year
+    birth_year = tarbiyalanuvchi.get("tugilganlik_yil")
+    if not birth_year:
+        raise HTTPException(status_code=400, detail="tugilganlik_yil is required in contract_data.tarbiyalanuvchi")
 
     # Validate group exists
     group_result = await db.execute(select(Group).where(Group.id == group_id))
@@ -706,9 +671,6 @@ async def create_student_with_contract(
 
     if not group:
         raise HTTPException(status_code=404, detail=f"Group with ID {group_id} not found")
-
-    # Get birth year from form fields
-    birth_year = student_birth_year
 
     # Check if group is full for this birth year
     group_full = await is_group_full(db, group_id, birth_year)
@@ -737,10 +699,10 @@ async def create_student_with_contract(
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error uploading files to S3: {str(e)}")
 
-    # Split full_name to first_name and last_name
-    name_parts = full_name.strip().split(maxsplit=1)
-    first_name = name_parts[0] if len(name_parts) > 0 else ""
-    last_name = name_parts[1] if len(name_parts) > 1 else ""
+    # Parse date_of_birth if string
+    if isinstance(date_of_birth, str):
+        from datetime import datetime
+        date_of_birth = datetime.strptime(date_of_birth, "%Y-%m-%d").date()
 
     # Create student
     student_status = StudentStatus.ACTIVE if status.lower() == "active" else StudentStatus.INACTIVE
@@ -757,7 +719,7 @@ async def create_student_with_contract(
     await db.commit()
     await db.refresh(student)
 
-    # Allocate contract number using birth year from custom_fields
+    # Allocate contract number
     try:
         available_numbers = await get_available_contract_numbers(db, group_id, birth_year)
         if not available_numbers:
@@ -772,19 +734,35 @@ async def create_student_with_contract(
         await db.rollback()
         raise HTTPException(status_code=400, detail=str(e))
 
+    # Parse contract dates
+    start_date_str = shartnoma_muddati.get("boshlanish")
+    end_date_str = shartnoma_muddati.get("tugash")
+    monthly_fee = tolov.get("oylik_narx", 0)
+
+    if start_date_str and isinstance(start_date_str, str):
+        start_date = datetime.strptime(start_date_str, "%Y-%m-%d").date()
+    else:
+        start_date = datetime.now().date()
+
+    if end_date_str and isinstance(end_date_str, str):
+        end_date = datetime.strptime(end_date_str, "%Y-%m-%d").date()
+    else:
+        from dateutil.relativedelta import relativedelta
+        end_date = start_date + relativedelta(years=1)
+
     # Convert data to JSON strings for storage
     contract_images_json_str = json.dumps(contract_images_urls)
-    custom_fields_json_str = json.dumps(custom_fields_data, ensure_ascii=False, default=str)
+    custom_fields_json_str = json.dumps(contract_info, ensure_ascii=False, default=str)
 
     # Create contract in ACTIVE status (no signature needed)
     contract = Contract(
         contract_number=contract_number,
         birth_year=birth_year,
         sequence_number=sequence_number,
-        start_date=contract_start_date,
-        end_date=contract_end_date,
+        start_date=start_date,
+        end_date=end_date,
         monthly_fee=monthly_fee,
-        status=ContractStatus.ACTIVE,  # ACTIVE instead of PENDING
+        status=ContractStatus.ACTIVE,
         student_id=student.id,
         group_id=group_id,
         passport_copy_url=passport_copy_url,
@@ -800,18 +778,33 @@ async def create_student_with_contract(
     await db.commit()
     await db.refresh(contract)
 
-    # Generate PDF using ContractPDFGenerator
-    # Prepare data dict for PDF generation
+    # Prepare data for PDF generation (contractdoc.py format)
+    # Parse sana from start_date
+    sana_obj = start_date
+    months_uz = {
+        1: "январь", 2: "февраль", 3: "март", 4: "апрель",
+        5: "май", 6: "июнь", 7: "июль", 8: "август",
+        9: "сентябрь", 10: "октябрь", 11: "ноябрь", 12: "декабрь"
+    }
+
     pdf_data = {
-        "contract_number": contract_number,
-        "student": custom_fields_data.get("student", {}),
-        "parent": custom_fields_data.get("parent", {}),
-        "contract_terms": custom_fields_data.get("contract_terms", {}),
-        "contract_images_urls": contract_images_urls,
-        "passport_copy_url": passport_copy_url,
-        "form_086_url": form_086_url,
-        "heart_checkup_url": heart_checkup_url,
-        "birth_certificate_url": birth_certificate_url,
+        "shartnoma_raqami": contract_number,
+        "sana": {
+            "kun": f"{sana_obj.day:02d}",
+            "oy": months_uz.get(sana_obj.month, ""),
+            "yil": str(sana_obj.year)
+        },
+        "buyurtmachi": buyurtmachi,
+        "tarbiyalanuvchi": tarbiyalanuvchi,
+        "shartnoma_muddati": {
+            "boshlanish": start_date.strftime('«%d» %B'),
+            "tugash": end_date.strftime('«%d» %B'),
+            "yil": str(start_date.year)
+        },
+        "tolov": {
+            "oylik_narx": f"{monthly_fee:,.0f}".replace(",", " "),
+            "oylik_narx_sozlar": "sum"  # You can add number-to-words conversion here
+        }
     }
 
     # Generate PDF in temp file
