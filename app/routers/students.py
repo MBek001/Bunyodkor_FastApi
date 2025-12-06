@@ -553,17 +553,13 @@ async def create_student_with_contract(
     user: Annotated[User, Depends(require_permission(PERM_STUDENTS_EDIT))],
     db: Annotated[AsyncSession, Depends(get_db)],
 
-    # ========== STUDENT BASIC INFO ==========
-    full_name: str = Form(..., description="Student full name"),
+    # ========== STUDENT BASIC INFO (for database) ==========
+    full_name: str = Form(..., description="Student full name (will be split to first/last name)"),
     date_of_birth: date = Form(..., description="Student date of birth"),
-    gender: str = Form(..., description="Student gender (male/female)"),
     group_id: int = Form(..., description="Group ID to assign student"),
     phone: Optional[str] = Form(None, description="Student phone number"),
-    email: Optional[str] = Form(None, description="Student email"),
     address: Optional[str] = Form(None, description="Student address"),
     status: str = Form("active", description="Student status (active/inactive)"),
-    parent_name: Optional[str] = Form(None, description="Parent name"),
-    parent_phone: Optional[str] = Form(None, description="Parent phone number"),
 
     # ========== CONTRACT FIELDS ==========
     contract_creation_date: date = Form(..., description="Contract creation date"),
@@ -741,18 +737,20 @@ async def create_student_with_contract(
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error uploading files to S3: {str(e)}")
 
+    # Split full_name to first_name and last_name
+    name_parts = full_name.strip().split(maxsplit=1)
+    first_name = name_parts[0] if len(name_parts) > 0 else ""
+    last_name = name_parts[1] if len(name_parts) > 1 else ""
+
     # Create student
     student_status = StudentStatus.ACTIVE if status.lower() == "active" else StudentStatus.INACTIVE
     student = Student(
-        full_name=full_name,
+        first_name=first_name,
+        last_name=last_name,
         date_of_birth=date_of_birth,
-        gender=gender,
         phone=phone,
-        email=email,
         address=address,
         status=student_status,
-        parent_name=parent_name,
-        parent_phone=parent_phone,
         group_id=group_id
     )
     db.add(student)
