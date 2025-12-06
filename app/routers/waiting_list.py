@@ -9,6 +9,7 @@ from app.models.domain import WaitingList, Student, Group
 from app.schemas.waiting_list import WaitingListCreate, WaitingListUpdate, WaitingListRead
 from app.schemas.common import DataResponse, PaginationMeta
 from app.deps import require_permission, CurrentUser
+from app.models.auth import User
 
 router = APIRouter(prefix="/waiting-list", tags=["Waiting List"])
 
@@ -68,10 +69,10 @@ async def get_waiting_list(
     )
 
 
-@router.post("", response_model=DataResponse[WaitingListRead], dependencies=[Depends(require_permission(PERM_CONTRACTS_EDIT))])
+@router.post("", response_model=DataResponse[WaitingListRead])
 async def add_to_waiting_list(
     data: WaitingListCreate,
-    user: CurrentUser,
+    user: Annotated[User, Depends(require_permission(PERM_CONTRACTS_EDIT))],
     db: Annotated[AsyncSession, Depends(get_db)],
 ):
     """
