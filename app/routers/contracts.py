@@ -321,7 +321,7 @@ async def get_contract_pdf(contract_number: str):
     return FileResponse(path=file_path, media_type="application/pdf", filename=f"{contract_number}.pdf")
 
 
-@router.post("/create-with-files", response_class=FileResponse)
+@router.post("/create-with-files", response_class=FileResponse, deprecated=True)
 async def create_contract_with_file_upload(
     user: Annotated[User, Depends(require_permission(PERM_CONTRACTS_EDIT))],
     db: Annotated[AsyncSession, Depends(get_db)],
@@ -336,18 +336,20 @@ async def create_contract_with_file_upload(
     contract_images: List[UploadFile] = File(...)
 ):
     """
-    Create contract with direct file upload (Form + Files).
+    ⚠️ DEPRECATED: This endpoint is deprecated and disabled.
 
-    Workflow:
-    1. Receive files via Form/File upload
-    2. Upload all files to AWS S3
-    3. Create contract in database with S3 URLs
-    4. Generate PDF contract
-    5. Return PDF file directly
+    Please use POST /students/create-with-contract instead.
 
-    This endpoint is different from /create-with-documents which expects
-    pre-uploaded URLs. This one handles file upload directly.
+    The new endpoint:
+    - Creates both student AND contract in one operation
+    - Has all form fields visible (not hidden in JSON)
+    - Uploads files to S3 automatically
+    - Generates and returns PDF contract
     """
+    raise HTTPException(
+        status_code=410,
+        detail="This endpoint is deprecated. Please use POST /students/create-with-contract instead."
+    )
     # Parse custom fields
     try:
         custom_fields_dict = json.loads(custom_fields_json)

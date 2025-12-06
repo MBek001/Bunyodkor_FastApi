@@ -552,29 +552,74 @@ async def create_student(
 async def create_student_with_contract(
     user: Annotated[User, Depends(require_permission(PERM_STUDENTS_EDIT))],
     db: Annotated[AsyncSession, Depends(get_db)],
-    # Student basic info as Form fields
-    full_name: str = Form(...),
-    date_of_birth: date = Form(...),
-    gender: str = Form(...),
-    group_id: int = Form(...),
-    phone: Optional[str] = Form(None),
-    email: Optional[str] = Form(None),
-    address: Optional[str] = Form(None),
-    status: str = Form("active"),
-    parent_name: Optional[str] = Form(None),
-    parent_phone: Optional[str] = Form(None),
-    # Custom fields as JSON string
-    custom_fields_json: str = Form(...),
-    # Document files
-    passport_copy: UploadFile = File(...),
-    form_086: UploadFile = File(...),
-    heart_checkup: UploadFile = File(...),
-    birth_certificate: UploadFile = File(...),
-    contract_image_1: UploadFile = File(...),
-    contract_image_2: UploadFile = File(...),
-    contract_image_3: UploadFile = File(...),
-    contract_image_4: UploadFile = File(...),
-    contract_image_5: UploadFile = File(...),
+
+    # ========== STUDENT BASIC INFO ==========
+    full_name: str = Form(..., description="Student full name"),
+    date_of_birth: date = Form(..., description="Student date of birth"),
+    gender: str = Form(..., description="Student gender (male/female)"),
+    group_id: int = Form(..., description="Group ID to assign student"),
+    phone: Optional[str] = Form(None, description="Student phone number"),
+    email: Optional[str] = Form(None, description="Student email"),
+    address: Optional[str] = Form(None, description="Student address"),
+    status: str = Form("active", description="Student status (active/inactive)"),
+    parent_name: Optional[str] = Form(None, description="Parent name"),
+    parent_phone: Optional[str] = Form(None, description="Parent phone number"),
+
+    # ========== CONTRACT FIELDS ==========
+    contract_creation_date: date = Form(..., description="Contract creation date"),
+
+    # Customer Info (Parent/Guardian who signs contract)
+    customer_full_name: str = Form(..., description="Customer full name"),
+    customer_passport_number: str = Form(..., description="Customer passport number"),
+    customer_passport_issued_by: str = Form(..., description="Customer passport issued by"),
+    customer_passport_issue_date: date = Form(..., description="Customer passport issue date"),
+    customer_address: str = Form(..., description="Customer address"),
+    customer_phone: str = Form(..., description="Customer phone"),
+
+    # Student Info (from application form)
+    student_birth_year: int = Form(..., description="Student birth year"),
+    student_first_name: str = Form(..., description="Student first name"),
+    student_last_name: str = Form(..., description="Student last name"),
+    student_patronymic: Optional[str] = Form(None, description="Student patronymic"),
+    student_form_address: str = Form(..., description="Student address from form"),
+    student_form_phone: str = Form(..., description="Student phone from form"),
+
+    # Father Info (optional)
+    father_full_name: Optional[str] = Form(None, description="Father full name"),
+    father_occupation: Optional[str] = Form(None, description="Father occupation"),
+    father_phone: Optional[str] = Form(None, description="Father phone"),
+
+    # Mother Info (optional)
+    mother_full_name: Optional[str] = Form(None, description="Mother full name"),
+    mother_occupation: Optional[str] = Form(None, description="Mother occupation"),
+    mother_phone: Optional[str] = Form(None, description="Mother phone"),
+
+    # Parent Passport Info
+    parent_passport_series_number: str = Form(..., description="Parent passport series and number"),
+    parent_passport_issued_by: str = Form(..., description="Parent passport issued by"),
+    parent_passport_issue_date: date = Form(..., description="Parent passport issue date"),
+
+    # Student Birth Certificate Info
+    birth_cert_full_name: str = Form(..., description="Student full name on birth certificate"),
+    birth_cert_series: str = Form(..., description="Birth certificate series"),
+    birth_cert_issued_by: str = Form(..., description="Birth certificate issued by"),
+    birth_cert_issue_date: date = Form(..., description="Birth certificate issue date"),
+
+    # Contract Terms
+    contract_start_date: date = Form(..., description="Contract start date"),
+    contract_end_date: date = Form(..., description="Contract end date"),
+    monthly_fee: float = Form(..., description="Monthly subscription fee"),
+
+    # ========== DOCUMENT FILES ==========
+    passport_copy: UploadFile = File(..., description="Passport copy file"),
+    form_086: UploadFile = File(..., description="Medical form 086 file"),
+    heart_checkup: UploadFile = File(..., description="Heart checkup document file"),
+    birth_certificate: UploadFile = File(..., description="Birth certificate file"),
+    contract_image_1: UploadFile = File(..., description="Contract page 1"),
+    contract_image_2: UploadFile = File(..., description="Contract page 2"),
+    contract_image_3: UploadFile = File(..., description="Contract page 3"),
+    contract_image_4: UploadFile = File(..., description="Contract page 4"),
+    contract_image_5: UploadFile = File(..., description="Contract page 5"),
 ):
     """
     Create student with contract and all documents in ONE operation.
@@ -606,11 +651,58 @@ async def create_student_with_contract(
     import os
     import tempfile
 
-    # Parse custom fields from JSON string
-    try:
-        custom_fields_data = json.loads(custom_fields_json)
-    except json.JSONDecodeError:
-        raise HTTPException(status_code=400, detail="Invalid JSON in custom_fields_json")
+    # Build custom fields data from individual form fields
+    custom_fields_data = {
+        "contract_creation_date": str(contract_creation_date),
+        "customer": {
+            "full_name": customer_full_name,
+            "passport_number": customer_passport_number,
+            "passport_issued_by": customer_passport_issued_by,
+            "passport_issue_date": str(customer_passport_issue_date),
+            "address": customer_address,
+            "phone": customer_phone
+        },
+        "student": {
+            "birth_year": student_birth_year,
+            "first_name": student_first_name,
+            "last_name": student_last_name,
+            "patronymic": student_patronymic,
+            "address": student_form_address,
+            "phone": student_form_phone
+        },
+        "parent_passport": {
+            "series_number": parent_passport_series_number,
+            "issued_by": parent_passport_issued_by,
+            "issue_date": str(parent_passport_issue_date)
+        },
+        "student_birth_certificate": {
+            "full_name": birth_cert_full_name,
+            "series": birth_cert_series,
+            "issued_by": birth_cert_issued_by,
+            "issue_date": str(birth_cert_issue_date)
+        },
+        "contract_terms": {
+            "contract_start_date": str(contract_start_date),
+            "contract_end_date": str(contract_end_date),
+            "monthly_fee": monthly_fee
+        }
+    }
+
+    # Add father info if provided
+    if father_full_name:
+        custom_fields_data["father"] = {
+            "full_name": father_full_name,
+            "occupation": father_occupation,
+            "phone": father_phone
+        }
+
+    # Add mother info if provided
+    if mother_full_name:
+        custom_fields_data["mother"] = {
+            "full_name": mother_full_name,
+            "occupation": mother_occupation,
+            "phone": mother_phone
+        }
 
     # Validate group exists
     group_result = await db.execute(select(Group).where(Group.id == group_id))
@@ -619,10 +711,8 @@ async def create_student_with_contract(
     if not group:
         raise HTTPException(status_code=404, detail=f"Group with ID {group_id} not found")
 
-    # Get birth year from custom fields
-    birth_year = custom_fields_data.get("student", {}).get("birth_year")
-    if not birth_year:
-        raise HTTPException(status_code=400, detail="birth_year is required in custom_fields.student")
+    # Get birth year from form fields
+    birth_year = student_birth_year
 
     # Check if group is full for this birth year
     group_full = await is_group_full(db, group_id, birth_year)
@@ -686,20 +776,15 @@ async def create_student_with_contract(
 
     # Convert data to JSON strings for storage
     contract_images_json_str = json.dumps(contract_images_urls)
-
-    # Get dates and fee from custom_fields.contract_terms
-    contract_terms = custom_fields_data.get("contract_terms", {})
-    start_date = contract_terms.get("contract_start_date")
-    end_date = contract_terms.get("contract_end_date")
-    monthly_fee = contract_terms.get("monthly_fee")
+    custom_fields_json_str = json.dumps(custom_fields_data, ensure_ascii=False, default=str)
 
     # Create contract in ACTIVE status (no signature needed)
     contract = Contract(
         contract_number=contract_number,
         birth_year=birth_year,
         sequence_number=sequence_number,
-        start_date=start_date,
-        end_date=end_date,
+        start_date=contract_start_date,
+        end_date=contract_end_date,
         monthly_fee=monthly_fee,
         status=ContractStatus.ACTIVE,  # ACTIVE instead of PENDING
         student_id=student.id,
@@ -709,7 +794,7 @@ async def create_student_with_contract(
         heart_checkup_url=heart_checkup_url,
         birth_certificate_url=birth_certificate_url,
         contract_images_urls=contract_images_json_str,
-        custom_fields=custom_fields_json,
+        custom_fields=custom_fields_json_str,
         signature_token=None  # No signature needed
     )
 
