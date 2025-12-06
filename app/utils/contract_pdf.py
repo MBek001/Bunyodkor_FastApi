@@ -18,15 +18,41 @@ import tempfile
 from PIL import Image
 
 
-font_path = r"C:\Users\Home\Downloads\dejavu-fonts-ttf-2.37\dejavu-fonts-ttf-2.37\ttf\DejaVuSans.ttf"
-bold_font_path = r"C:\Users\Home\Downloads\dejavu-fonts-ttf-2.37\dejavu-fonts-ttf-2.37\ttf\DejaVuSans-Bold.ttf"
+# Try to find DejaVu fonts in common Linux locations
+font_locations = [
+    "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
+    "/usr/share/fonts/dejavu/DejaVuSans.ttf",
+    "/usr/local/share/fonts/DejaVuSans.ttf",
+    r"C:\Users\Home\Downloads\dejavu-fonts-ttf-2.37\dejavu-fonts-ttf-2.37\ttf\DejaVuSans.ttf"  # Windows fallback
+]
+
+bold_font_locations = [
+    "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
+    "/usr/share/fonts/dejavu/DejaVuSans-Bold.ttf",
+    "/usr/local/share/fonts/DejaVuSans-Bold.ttf",
+    r"C:\Users\Home\Downloads\dejavu-fonts-ttf-2.37\dejavu-fonts-ttf-2.37\ttf\DejaVuSans-Bold.ttf"  # Windows fallback
+]
+
+# Find existing font files
+font_path = None
+bold_font_path = None
+
+for path in font_locations:
+    if os.path.exists(path):
+        font_path = path
+        break
+
+for path in bold_font_locations:
+    if os.path.exists(path):
+        bold_font_path = path
+        break
 
 # Shriftlarni ro'yxatdan o'tkazish logikasi
 FONT_NORMAL = 'DejaVu'
 FONT_BOLD = 'DejaVu-Bold'
 FONT_FALLBACK = False
 
-if os.path.exists(font_path) and os.path.exists(bold_font_path):
+if font_path and bold_font_path:
     try:
         pdfmetrics.registerFont(TTFont("DejaVu", font_path))
         pdfmetrics.registerFont(TTFont("DejaVu-Bold", bold_font_path))
@@ -35,9 +61,10 @@ if os.path.exists(font_path) and os.path.exists(bold_font_path):
         FONT_FALLBACK = False
     except Exception as e:
         print(f"!!! Shriftlarni ro'yxatdan o'tkazishda xato: {e}. Standart shriftlarga o'tildi.")
-
-if FONT_FALLBACK:
-    print(f"!!! DIQQAT: '{font_path}' yoki uning bold varianti topilmadi.")
+        FONT_FALLBACK = True
+else:
+    FONT_FALLBACK = True
+    print(f"!!! DIQQAT: DejaVu shriftlari topilmadi. Standart shriftlar ishlatiladi.")
     print("!!! Hujjatda Kirill alifbosidagi matn xato (kvadratlar) chiqishi mumkin.")
 
 registerFontFamily(
@@ -124,9 +151,14 @@ styles.add(ParagraphStyle(
 class ContractPDFGenerator:
     """Platypus yordamida shartnoma yaratuvchi sinf"""
 
-    def __init__(self, data_file):
-        """Konstruktor - ma'lumotlarni yuklash"""
-        self.data = self._load_data(data_file)
+    def __init__(self, data_file_or_dict):
+        """
+        Konstruktor - ma'lumotlarni yuklash
+
+        Args:
+            data_file_or_dict: JSON fayl yo'li yoki dictionary
+        """
+        self.data = self._load_data(data_file_or_dict)
         self.story = []
         # DocTemplate yaratish, sahifa kengligi 210mm. Marginlar 25mm.
         self.doc = SimpleDocTemplate(
@@ -191,19 +223,33 @@ class ContractPDFGenerator:
 
         return flowables
 
-    def _load_data(self, data_file):
-        """Ma'lumotlarni JSON fayldan yuklash yoki default template yaratish"""
-        if os.path.exists(data_file):
-            print(f"Ma'lumotlar fayli yuklanmoqda: {data_file}")
-            with open(data_file, 'r', encoding='utf-8') as f:
+    def _load_data(self, data_file_or_dict):
+        """
+        Ma'lumotlarni JSON fayldan yuklash yoki dictionary sifatida qabul qilish
+
+        Args:
+            data_file_or_dict: JSON fayl yo'li (str) yoki dictionary
+
+        Returns:
+            dict: Shartnoma ma'lumotlari
+        """
+        # Agar dictionary berilgan bo'lsa, to'g'ridan-to'g'ri qaytaramiz
+        if isinstance(data_file_or_dict, dict):
+            print("Ma'lumotlar dictionary sifatida qabul qilindi")
+            return data_file_or_dict
+
+        # Aks holda fayl yo'li deb hisoblaymiz
+        if os.path.exists(data_file_or_dict):
+            print(f"Ma'lumotlar fayli yuklanmoqda: {data_file_or_dict}")
+            with open(data_file_or_dict, 'r', encoding='utf-8') as f:
                 return json.load(f)
         else:
             default_data = self._default_template()
             # Namuna faylni yaratish
-            with open(data_file, 'w', encoding='utf-8') as f:
+            with open(data_file_or_dict, 'w', encoding='utf-8') as f:
                 json.dump(default_data, f, indent=4, ensure_ascii=False)
-            print(f"!!! Xato: Ma'lumotlar fayli topilmadi: {data_file}")
-            print(f"  Namuna '{data_file}' fayli yaratildi. Uni tahrirlab, keyin ishga tushiring.")
+            print(f"!!! Xato: Ma'lumotlar fayli topilmadi: {data_file_or_dict}")
+            print(f"  Namuna '{data_file_or_dict}' fayli yaratildi. Uni tahrirlab, keyin ishga tushiring.")
             sys.exit(1)
 
     def _default_template(self):
@@ -871,28 +917,64 @@ class ContractPDFGenerator:
 
     def add_attachments_to_pdf(self, base_pdf, image_urls, output_pdf):
         """
-        Asosiy PDF ga barcha rasm fayllarini (S3’dan yuklab olingan yoki lokal yo‘ldagi) qo‘shadi.
+        Asosiy PDF ga barcha rasm fayllarini (S3'dan yuklab olingan yoki lokal yo'ldagi) qo'shadi.
         """
+        import httpx
+        from io import BytesIO
+
         merger = PdfMerger()
         merger.append(base_pdf)
 
         for url in image_urls:
             try:
+                # S3 URL yoki lokal fayl yo'lini aniqlash
+                if url.startswith('http://') or url.startswith('https://'):
+                    # S3 URL dan yuklab olish
+                    with httpx.Client() as client:
+                        response = client.get(url, timeout=10.0)
+                        response.raise_for_status()
+                        img_data = BytesIO(response.content)
+                    img = Image.open(img_data)
+
+                    # Vaqtinchalik fayl yaratish (ReportLab uchun)
+                    with tempfile.NamedTemporaryFile(suffix=f".{img.format.lower()}", delete=False) as temp_img_file:
+                        img.save(temp_img_file.name)
+                        temp_img_path = temp_img_file.name
+                else:
+                    # Lokal fayl
+                    img = Image.open(url)
+                    temp_img_path = url
+
                 # Rasmni PDF sahifaga joylash
                 with tempfile.NamedTemporaryFile(suffix=".pdf", delete=False) as temp_img_pdf:
                     c = canvas.Canvas(temp_img_pdf.name, pagesize=A4)
-                    img = Image.open(url)
-                    # O‘lchamni A4 formatga joylashtiramiz (nisbatni saqlab)
+
+                    # O'lchamni A4 formatga joylashtiramiz (nisbatni saqlab)
                     w, h = img.size
                     aspect = h / w
                     width = A4[0] - 30 * mm
                     height = width * aspect
-                    c.drawImage(url, 15 * mm, A4[1] - height - 15 * mm, width=width, height=height)
+
+                    # Agar rasm juda baland bo'lsa, balandlikni cheklash
+                    max_height = A4[1] - 30 * mm
+                    if height > max_height:
+                        height = max_height
+                        width = height / aspect
+
+                    c.drawImage(temp_img_path, 15 * mm, A4[1] - height - 15 * mm, width=width, height=height)
                     c.showPage()
                     c.save()
                     merger.append(temp_img_pdf.name)
+
+                # Vaqtinchalik faylni tozalash (S3 URL uchun)
+                if url.startswith('http://') or url.startswith('https://'):
+                    try:
+                        os.unlink(temp_img_path)
+                    except:
+                        pass
+
             except Exception as e:
-                print(f"!!! Attachmentni PDF ga qo‘shishda xato: {e}")
+                print(f"!!! Attachmentni PDF ga qo'shishda xato: {url} -> {e}")
                 continue
 
         merger.write(output_pdf)
