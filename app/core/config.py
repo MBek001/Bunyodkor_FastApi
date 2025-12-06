@@ -20,6 +20,12 @@ class Settings(BaseSettings):
     SMS_PROVIDER_API_KEY: str = ""
     SMS_PROVIDER_URL: str = ""
 
+    # AWS S3 Configuration
+    AWS_ACCESS_KEY_ID: str = ""
+    AWS_SECRET_ACCESS_KEY: str = ""
+    AWS_BUCKET_NAME: str = ""
+    AWS_REGION: str = "us-east-1"
+
     # Telegram Bot Configuration
     TELEGRAM_BOT_TOKEN: str = ""
     TELEGRAM_CHAT_ID: str = ""

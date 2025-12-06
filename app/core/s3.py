@@ -2,12 +2,12 @@ import boto3
 from uuid import uuid4
 from fastapi import UploadFile
 from typing import List
-from .config import  settings
+from .config import settings
 
 AWS_ACCESS_KEY_ID = settings.AWS_ACCESS_KEY_ID
 AWS_SECRET_ACCESS_KEY = settings.AWS_SECRET_ACCESS_KEY
 AWS_BUCKET_NAME = settings.AWS_BUCKET_NAME
-AWS_REGION =settings.AWS_REGION
+AWS_REGION = settings.AWS_REGION
 
 s3 = boto3.client(
     "s3",
@@ -17,6 +17,7 @@ s3 = boto3.client(
 )
 
 def upload_image_to_s3(file: UploadFile, folder: str = "contracts") -> str:
+    """Upload image to S3 and return public URL"""
     extension = file.filename.split('.')[-1]
     key = f"{folder}/{uuid4()}.{extension}"
 
