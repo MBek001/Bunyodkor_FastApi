@@ -2,7 +2,7 @@ import boto3
 from uuid import uuid4
 from fastapi import UploadFile
 from typing import List
-from  config import  settings
+from .config import  settings
 
 AWS_ACCESS_KEY_ID = settings.AWS_ACCESS_KEY_ID
 AWS_SECRET_ACCESS_KEY = settings.AWS_SECRET_ACCESS_KEY
