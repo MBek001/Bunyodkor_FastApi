@@ -23,6 +23,11 @@ class StudentInfo(BaseModel):
     address: str = Field(description="Full address: region, city, district, street, house, apartment")
     phone: str
 
+class ContractCreateBody(BaseModel):
+    student_id: int
+    group_id: int
+    contract_number: str
+    custom_fields: dict  # or ContractCustomFields if you already have the Pydantic model
 
 class ParentInfo(BaseModel):
     """Parent/Guardian information from application form (Image 1)"""
@@ -66,20 +71,21 @@ class CustomerInfo(BaseModel):
 class ContractCustomFields(BaseModel):
     """All custom fields from handwritten parts of contract"""
     # From Image 1 - Application
+    contract_creation_date: date
+    customer: CustomerInfo
     student: StudentInfo
     father: Optional[ParentInfo] = None
     mother: Optional[ParentInfo] = None
 
     # From Image 2 - Contract pages
-    contract_creation_date: date
     parent_passport: PassportInfo
     student_birth_certificate: BirthCertificateInfo
 
     # From Image 3 - Contract terms
     contract_terms: ContractTermsInfo
 
-    # From Image 4 - Signature page
-    customer: CustomerInfo
+
+
 
 
 class ContractRead(BaseModel):
@@ -128,6 +134,10 @@ class ContractCreateWithDocuments(BaseModel):
     """Create contract with all documents and handwritten data"""
     student_id: int
     group_id: int
+    contract_number: str
+    custom_fields: ContractCustomFields = Field(
+        description="All handwritten data from contract documents"
+    )
 
     # Document URLs (must be uploaded first)
     passport_copy_url: str = Field(description="URL of passport copy document")
@@ -137,9 +147,6 @@ class ContractCreateWithDocuments(BaseModel):
     contract_images_urls: List[str] = Field(description="List of 5 contract page image URLs")
 
     # All handwritten fields captured by admin
-    custom_fields: ContractCustomFields = Field(
-        description="All handwritten data from contract documents"
-    )
 
 
 class ContractUpdate(BaseModel):
@@ -176,13 +183,20 @@ class NextAvailableNumber(BaseModel):
     is_full: bool
 
 
+# class ContractCreatedResponse(BaseModel):
+#     """Response after creating a contract with documents"""
+#     contract_id: int
+#     contract_number: str
+#     birth_year: int
+#     sequence_number: int
+#     signature_token: str
+#     signature_link: str
+#     message: str
+#     status: str  # "pending_signature" or "active"
 class ContractCreatedResponse(BaseModel):
-    """Response after creating a contract with documents"""
     contract_id: int
     contract_number: str
     birth_year: int
     sequence_number: int
-    signature_token: str
-    signature_link: str
     message: str
-    status: str  # "pending_signature" or "active"
+    pdf_url: str

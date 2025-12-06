@@ -307,146 +307,18 @@ async def bulk_delete_contracts(
     })
 
 
-@router.post("/create-with-documents", response_model=DataResponse[ContractCreatedResponse])
-async def create_contract_with_documents(
-    data: ContractCreateWithDocuments,
-    user: Annotated[User, Depends(require_permission(PERM_CONTRACTS_EDIT))],
-    db: Annotated[AsyncSession, Depends(get_db)],
-):
+@router.get("/pdf/{contract_number}", response_class=FileResponse)
+async def get_contract_pdf(contract_number: str):
     """
-    Create a new contract with all documents and handwritten field data.
+    Get generated contract PDF by contract number.
 
-    Workflow:
-    1. Admin uploads all documents (5 contract pages + passport + medical + heart + birth cert)
-    2. Admin enters all handwritten data from documents
-    3. System checks if group has capacity for student's birth year
-    4. If full → adds to waiting list and returns error
-    5. If space available → allocates contract number (N{seq}{year})
-    6. Creates contract in PENDING status (waiting for signature)
-    7. Generates unique signature token and signing link
-    8. Returns contract info with signing link
-    9. After signature → contract status changes to ACTIVE
-
-    All handwritten fields from 5 contract pages are captured in custom_fields.
+    The PDF file should exist in temp_pdfs/ directory after contract creation.
     """
-    # Validate that student exists
-    student_result = await db.execute(select(Student).where(Student.id == data.student_id))
-    student = student_result.scalar_one_or_none()
+    file_path = f"temp_pdfs/contract_{contract_number}.pdf"
+    if not os.path.exists(file_path):
+        raise HTTPException(status_code=404, detail="PDF file not found")
 
-    if not student:
-        raise HTTPException(status_code=404, detail=f"Student with ID {data.student_id} not found")
-
-    # Check if student already has an active contract
-    active_contract = await db.execute(
-        select(Contract).where(
-            Contract.student_id == data.student_id,
-            Contract.status == ContractStatus.ACTIVE
-        )
-    )
-    if active_contract.scalar_one_or_none():
-        raise HTTPException(
-            status_code=400,
-            detail="This student already has an active contract. Only one active contract per student is allowed."
-        )
-
-    # Get birth year from handwritten data (custom_fields.student.birth_year)
-    birth_year = data.custom_fields.student.birth_year
-
-    # Check if group is full for this birth year
-    group_full = await is_group_full(db, data.group_id, birth_year)
-
-    if group_full:
-        # Add to waiting list
-        waiting_entry = WaitingList(
-            student_id=data.student_id,
-            group_id=data.group_id,
-            priority=0,
-            notes=f"Group full for birth year {birth_year}. Documents uploaded and ready.",
-            added_by_user_id=user.id
-        )
-        db.add(waiting_entry)
-        await db.commit()
-        await db.refresh(waiting_entry)
-
-        raise HTTPException(
-            status_code=409,
-            detail={
-                "message": f"Group is full for birth year {birth_year}. Student added to waiting list.",
-                "waiting_list_id": waiting_entry.id,
-                "waiting_list": True,
-                "birth_year": birth_year
-            }
-        )
-
-    # Get group for capacity check
-    group_result = await db.execute(select(Group).where(Group.id == data.group_id))
-    group = group_result.scalar_one_or_none()
-
-    if not group:
-        raise HTTPException(status_code=404, detail=f"Group with ID {data.group_id} not found")
-
-    # Allocate contract number using birth year from custom_fields
-    try:
-        available_numbers = await get_available_contract_numbers(db, data.group_id, birth_year)
-        if not available_numbers:
-            raise ContractNumberAllocationError(
-                f"No available contract numbers for group {group.name} and birth year {birth_year}"
-            )
-
-        sequence_number = available_numbers[0]
-        contract_number = f"N{sequence_number}{birth_year}"
-    except ContractNumberAllocationError as e:
-        raise HTTPException(status_code=400, detail=str(e))
-
-    # Generate unique signature token
-    signature_token = str(uuid.uuid4())
-
-    # Convert data to JSON strings for storage
-    contract_images_json = json.dumps(data.contract_images_urls)
-    custom_fields_json = json.dumps(data.custom_fields.model_dump(), ensure_ascii=False, default=str)
-
-    # Get dates and fee from custom_fields.contract_terms
-    start_date = data.custom_fields.contract_terms.contract_start_date
-    end_date = data.custom_fields.contract_terms.contract_end_date
-    monthly_fee = data.custom_fields.contract_terms.monthly_fee
-
-    # Create contract in PENDING status (waiting for signature)
-    contract = Contract(
-        contract_number=contract_number,
-        birth_year=birth_year,
-        sequence_number=sequence_number,
-        start_date=start_date,
-        end_date=end_date,
-        monthly_fee=monthly_fee,
-        status=ContractStatus.PENDING,
-        student_id=data.student_id,
-        group_id=data.group_id,
-        passport_copy_url=data.passport_copy_url,
-        form_086_url=data.form_086_url,
-        heart_checkup_url=data.heart_checkup_url,
-        birth_certificate_url=data.birth_certificate_url,
-        contract_images_urls=contract_images_json,
-        custom_fields=custom_fields_json,
-        signature_token=signature_token
-    )
-
-    db.add(contract)
-    await db.commit()
-    await db.refresh(contract)
-
-    # Generate signing link
-    signature_link = f"/signatures/sign/{signature_token}"
-
-    return DataResponse(data=ContractCreatedResponse(
-        contract_id=contract.id,
-        contract_number=contract_number,
-        birth_year=birth_year,
-        sequence_number=sequence_number,
-        signature_token=signature_token,
-        signature_link=signature_link,
-        message="Contract created successfully and ready for signature. Send the signing link to the customer.",
-        status="pending_signature"
-    ))
+    return FileResponse(path=file_path, media_type="application/pdf", filename=f"{contract_number}.pdf")
 
 
 @router.post("/create-with-files", response_class=FileResponse)
