@@ -17,15 +17,21 @@ s3 = boto3.client(
 )
 
 def upload_image_to_s3(file: UploadFile, folder: str = "contracts") -> str:
-    """Upload image to S3 and return public URL"""
+    """
+    Upload image to S3 and return public URL.
+
+    Note: ACL is not used because the bucket has ACLs disabled.
+    Ensure your bucket has a public-read bucket policy or use presigned URLs for access.
+    """
     extension = file.filename.split('.')[-1]
     key = f"{folder}/{uuid4()}.{extension}"
 
+    # Upload without ACL (bucket has ACLs disabled)
     s3.upload_fileobj(
         Fileobj=file.file,
         Bucket=AWS_BUCKET_NAME,
         Key=key,
-        ExtraArgs={"ACL": "public-read", "ContentType": file.content_type}
+        ExtraArgs={"ContentType": file.content_type}
     )
 
     return f"https://{AWS_BUCKET_NAME}.s3.{AWS_REGION}.amazonaws.com/{key}"
