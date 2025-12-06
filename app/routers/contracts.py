@@ -17,6 +17,7 @@ from app.schemas.contract import (
 from app.schemas.common import DataResponse, PaginationMeta
 from app.schemas.waiting_list import WaitingListSimple
 from app.deps import require_permission, CurrentUser
+from app.models.auth import User
 from app.models.enums import ContractStatus
 from app.services.contract_allocation import (
     allocate_contract_number,
@@ -156,11 +157,11 @@ async def update_contract(
     return DataResponse(data=ContractRead.model_validate(contract))
 
 
-@router.post("/{contract_id}/terminate", response_model=DataResponse[ContractRead], dependencies=[Depends(require_permission(PERM_CONTRACTS_EDIT))])
+@router.post("/{contract_id}/terminate", response_model=DataResponse[ContractRead])
 async def terminate_contract(
     contract_id: int,
     data: ContractTerminate,
-    user: CurrentUser,
+    user: Annotated[User, Depends(require_permission(PERM_CONTRACTS_EDIT))],
     db: Annotated[AsyncSession, Depends(get_db)],
 ):
     """
@@ -302,10 +303,10 @@ async def bulk_delete_contracts(
     })
 
 
-@router.post("/create-with-documents", response_model=DataResponse[ContractCreatedResponse], dependencies=[Depends(require_permission(PERM_CONTRACTS_EDIT))])
+@router.post("/create-with-documents", response_model=DataResponse[ContractCreatedResponse])
 async def create_contract_with_documents(
     data: ContractCreateWithDocuments,
-    user: CurrentUser,
+    user: Annotated[User, Depends(require_permission(PERM_CONTRACTS_EDIT))],
     db: Annotated[AsyncSession, Depends(get_db)],
 ):
     """

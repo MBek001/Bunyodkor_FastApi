@@ -20,6 +20,7 @@ from app.schemas.attendance import AttendanceRead, GateLogRead
 from app.schemas.common import DataResponse, PaginationMeta
 from app.schemas.student_with_contract import StudentWithContractCreate, StudentWithContractResponse
 from app.deps import require_permission, CurrentUser
+from app.models.auth import User
 
 router = APIRouter(prefix="/students", tags=["Students"])
 
@@ -545,10 +546,10 @@ async def create_student(
     return DataResponse(data=StudentRead.model_validate(student))
 
 
-@router.post("/create-with-contract", response_model=DataResponse[StudentWithContractResponse], dependencies=[Depends(require_permission(PERM_STUDENTS_EDIT))])
+@router.post("/create-with-contract", response_model=DataResponse[StudentWithContractResponse])
 async def create_student_with_contract(
     data: StudentWithContractCreate,
-    user: CurrentUser,
+    user: Annotated[User, Depends(require_permission(PERM_STUDENTS_EDIT))],
     db: Annotated[AsyncSession, Depends(get_db)],
 ):
     """
