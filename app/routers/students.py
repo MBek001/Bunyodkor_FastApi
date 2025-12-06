@@ -18,7 +18,8 @@ from app.schemas.contract import ContractRead
 from app.schemas.transaction import TransactionRead
 from app.schemas.attendance import AttendanceRead, GateLogRead
 from app.schemas.common import DataResponse, PaginationMeta
-from app.deps import require_permission
+from app.schemas.student_with_contract import StudentWithContractCreate, StudentWithContractResponse
+from app.deps import require_permission, CurrentUser
 
 router = APIRouter(prefix="/students", tags=["Students"])
 
@@ -542,6 +543,189 @@ async def create_student(
     await db.commit()
     await db.refresh(student)
     return DataResponse(data=StudentRead.model_validate(student))
+
+
+@router.post("/create-with-contract", response_model=DataResponse[StudentWithContractResponse], dependencies=[Depends(require_permission(PERM_STUDENTS_EDIT))])
+async def create_student_with_contract(
+    data: StudentWithContractCreate,
+    user: CurrentUser,
+    db: Annotated[AsyncSession, Depends(get_db)],
+):
+    """
+    Create student with contract and all documents in ONE operation.
+
+    Complete workflow:
+    1. Upload all 9 documents first using /uploads/student-documents and /uploads/contract-documents
+    2. Submit this request with all student data, group selection, document URLs, and handwritten fields
+    3. System validates group capacity for birth year
+    4. If full → adds to waiting list and returns error
+    5. If space → creates student, allocates contract number, creates contract
+    6. Returns student ID, contract ID, and signature link
+
+    This endpoint combines:
+    - Student creation
+    - Group selection
+    - Document upload validation
+    - Contract number allocation
+    - Contract creation with PENDING status
+    - Signature link generation
+
+    All in one atomic operation!
+    """
+    from app.models.domain import Group, Contract, WaitingList
+    from app.models.enums import ContractStatus
+    from app.services.contract_allocation import (
+        get_available_contract_numbers,
+        is_group_full,
+        ContractNumberAllocationError
+    )
+    import json
+    import uuid
+
+    # Validate group exists
+    group_result = await db.execute(select(Group).where(Group.id == data.group_id))
+    group = group_result.scalar_one_or_none()
+
+    if not group:
+        raise HTTPException(status_code=404, detail=f"Group with ID {data.group_id} not found")
+
+    # Get birth year from handwritten data
+    birth_year = data.custom_fields.student.birth_year
+
+    # Check if group is full for this birth year
+    group_full = await is_group_full(db, data.group_id, birth_year)
+
+    if group_full:
+        # Create student first (so we have student_id for waiting list)
+        student = Student(
+            full_name=data.full_name,
+            date_of_birth=data.date_of_birth,
+            gender=data.gender,
+            phone=data.phone,
+            email=data.email,
+            address=data.address,
+            status=data.status,
+            parent_name=data.parent_name,
+            parent_phone=data.parent_phone,
+            group_id=None  # Don't assign group yet since it's full
+        )
+        db.add(student)
+        await db.commit()
+        await db.refresh(student)
+
+        # Add to waiting list
+        waiting_entry = WaitingList(
+            student_id=student.id,
+            group_id=data.group_id,
+            priority=0,
+            notes=f"Group full for birth year {birth_year}. All documents uploaded and ready for contract.",
+            added_by_user_id=user.id
+        )
+        db.add(waiting_entry)
+        await db.commit()
+
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "message": f"Group is full for birth year {birth_year}. Student created and added to waiting list.",
+                "student_id": student.id,
+                "waiting_list_id": waiting_entry.id,
+                "waiting_list": True,
+                "birth_year": birth_year
+            }
+        )
+
+    # Check if face_id already exists (if provided)
+    if hasattr(data, 'face_id') and data.face_id:
+        existing_face_id = await db.execute(select(Student).where(Student.face_id == data.face_id))
+        if existing_face_id.scalar_one_or_none():
+            raise HTTPException(status_code=400, detail="Face ID already exists. Please use a unique Face ID")
+
+    # Create student
+    student = Student(
+        full_name=data.full_name,
+        date_of_birth=data.date_of_birth,
+        gender=data.gender,
+        phone=data.phone,
+        email=data.email,
+        address=data.address,
+        status=data.status,
+        parent_name=data.parent_name,
+        parent_phone=data.parent_phone,
+        group_id=data.group_id
+    )
+    db.add(student)
+    await db.commit()
+    await db.refresh(student)
+
+    # Allocate contract number using birth year from custom_fields
+    try:
+        available_numbers = await get_available_contract_numbers(db, data.group_id, birth_year)
+        if not available_numbers:
+            raise ContractNumberAllocationError(
+                f"No available contract numbers for group {group.name} and birth year {birth_year}"
+            )
+
+        sequence_number = available_numbers[0]
+        contract_number = f"N{sequence_number}{birth_year}"
+    except ContractNumberAllocationError as e:
+        # Rollback student creation if contract number allocation fails
+        await db.rollback()
+        raise HTTPException(status_code=400, detail=str(e))
+
+    # Generate unique signature token
+    signature_token = str(uuid.uuid4())
+
+    # Convert data to JSON strings for storage
+    contract_images_json = json.dumps(data.contract_images_urls)
+    custom_fields_json = json.dumps(data.custom_fields.model_dump(), ensure_ascii=False, default=str)
+
+    # Get dates and fee from custom_fields.contract_terms
+    start_date = data.custom_fields.contract_terms.contract_start_date
+    end_date = data.custom_fields.contract_terms.contract_end_date
+    monthly_fee = data.custom_fields.contract_terms.monthly_fee
+
+    # Create contract in PENDING status (waiting for signature)
+    contract = Contract(
+        contract_number=contract_number,
+        birth_year=birth_year,
+        sequence_number=sequence_number,
+        start_date=start_date,
+        end_date=end_date,
+        monthly_fee=monthly_fee,
+        status=ContractStatus.PENDING,
+        student_id=student.id,
+        group_id=data.group_id,
+        passport_copy_url=data.passport_copy_url,
+        form_086_url=data.form_086_url,
+        heart_checkup_url=data.heart_checkup_url,
+        birth_certificate_url=data.birth_certificate_url,
+        contract_images_urls=contract_images_json,
+        custom_fields=custom_fields_json,
+        signature_token=signature_token
+    )
+
+    db.add(contract)
+    await db.commit()
+    await db.refresh(contract)
+
+    # Generate signing link
+    signature_link = f"/signatures/sign/{signature_token}"
+
+    return DataResponse(data=StudentWithContractResponse(
+        student_id=student.id,
+        student_full_name=student.full_name,
+        contract_id=contract.id,
+        contract_number=contract_number,
+        birth_year=birth_year,
+        sequence_number=sequence_number,
+        group_id=group.id,
+        group_name=group.name,
+        signature_token=signature_token,
+        signature_link=signature_link,
+        contract_status="pending_signature",
+        message=f"Student '{student.full_name}' created successfully with contract {contract_number}. Send the signing link to the customer."
+    ))
 
 
 @router.get("/{student_id}", response_model=DataResponse[StudentRead], dependencies=[Depends(require_permission(PERM_STUDENTS_VIEW))])
