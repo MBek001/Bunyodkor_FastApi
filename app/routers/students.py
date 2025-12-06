@@ -547,6 +547,10 @@ async def create_student(
     await db.refresh(student)
     return DataResponse(data=StudentRead.model_validate(student))
 
+from dateutil.relativedelta import relativedelta
+from decimal import Decimal, InvalidOperation
+from fastapi import HTTPException
+
 
 @router.post("/create-with-contract", response_class=FileResponse)
 async def create_student_with_contract(
@@ -562,11 +566,9 @@ async def create_student_with_contract(
     form_086: UploadFile = File(..., description="Medical form 086 file"),
     heart_checkup: UploadFile = File(..., description="Heart checkup document file"),
     birth_certificate: UploadFile = File(..., description="Birth certificate file"),
-    contract_image_1: UploadFile = File(..., description="Contract page 1"),
-    contract_image_2: UploadFile = File(..., description="Contract page 2"),
-    contract_image_3: UploadFile = File(..., description="Contract page 3"),
-    contract_image_4: UploadFile = File(..., description="Contract page 4"),
-    contract_image_5: UploadFile = File(..., description="Contract page 5"),
+        contract_image_1: UploadFile | None = File(None, description="Contract page 1 (optional)"),
+        contract_image_2: UploadFile | None = File(None, description="Contract page 2 (optional)"),
+
 ):
     """
     Create student with contract and all documents in ONE operation.
@@ -577,6 +579,7 @@ async def create_student_with_contract(
         "first_name": "Alvaro",
         "last_name": "Marata",
         "date_of_birth": "2010-12-06",
+        "contract_number":"",
         "phone": "998901234567",
         "address": "Toshkent shahar",
         "status": "active",
@@ -587,28 +590,29 @@ async def create_student_with_contract(
     **contract_data JSON structure:**
     ```json
     {
-        "buyurtmachi": {
-            "fio": "Tojiboyev Shohidbek",
-            "pasport_seriya": "AB1234567",
-            "pasport_kim_bergan": "Olmazor ROVD",
-            "pasport_qachon_bergan": "2020-01-15",
-            "manzil": "Toshkent, Chilonzor",
-            "telefon": "998901234567"
-        },
-        "tarbiyalanuvchi": {
-            "fio": "Alvaro Marata",
-            "tugilganlik_yil": 2010,
-            "tugilganlik_guvohnoma": "I-AA N1234567",
-            "guvohnoma_kim_bergan": "Toshkent RAGS",
-            "guvohnoma_qachon_bergan": "2010-12-06"
-        },
-        "shartnoma_muddati": {
-            "boshlanish": "2025-12-06",
-            "tugash": "2026-12-06"
-        },
-        "tolov": {
-            "oylik_narx": 600000
-        }
+       "buyurtmachi": {
+        "fio": " Каримович Ахмедов  Каримович",
+        "pasport_seriya": "AA 1234567",
+        "pasport_kim_bergan": "Чилонзор тумани ИИБ",
+        "pasport_qachon_bergan": "01.01.2024",
+        "manzil": "Тошкент ш, Чилонзор тумани, 1-даха, 12-уй, 34-хонадон",
+        "telefon": "+998 90 123 45 67"
+    },
+    "tarbiyalanuvchi": {
+        "fio": "Ахмедов Шоҳруҳ Дилшодович",
+        "tugilganlik_guvohnoma": "I-AA 1234567",
+        "guvohnoma_kim_bergan": "Чилонзор тумани ФХДЁ бўлими илонзор тумани",
+        "guvohnoma_qachon_bergan": "01.01.2016"
+    },
+    "shartnoma_muddati": {
+        "boshlanish": "2025-01-01",
+        "tugash": "31",
+         "yil": 2030
+    },
+    "tolov": {
+        "oylik_narx": "600 000",
+        "oylik_narx_sozlar": "олти юз минг"
+    }
     }
     ```
 
@@ -642,6 +646,7 @@ async def create_student_with_contract(
     first_name = student_info.get("first_name")
     last_name = student_info.get("last_name")
     date_of_birth = student_info.get("date_of_birth")
+    contract_number=student_info.get("contract_number")
     phone = student_info.get("phone")
     address = student_info.get("address")
     status = student_info.get("status", "active")
@@ -653,6 +658,11 @@ async def create_student_with_contract(
             status_code=400,
             detail="Missing required fields in student_data: first_name, last_name, date_of_birth, group_id"
         )
+    contract_images_urls = []
+    if contract_image_1:
+        contract_images_urls.append(upload_image_to_s3(contract_image_1, "contracts"))
+    if contract_image_2:
+        contract_images_urls.append(upload_image_to_s3(contract_image_2, "contracts"))
 
     # Extract contract fields
     buyurtmachi = contract_info.get("buyurtmachi", {})
@@ -682,20 +692,26 @@ async def create_student_with_contract(
         )
 
     # Upload all files to S3
+    # Upload all files to S3
     try:
-        passport_copy_url = upload_image_to_s3(passport_copy, "student-documents")
-        form_086_url = upload_image_to_s3(form_086, "student-documents")
-        heart_checkup_url = upload_image_to_s3(heart_checkup, "student-documents")
-        birth_certificate_url = upload_image_to_s3(birth_certificate, "student-documents")
+        # Fayl pointerlarini qayta boshiga olish
+        for f in [passport_copy, form_086, heart_checkup, birth_certificate, contract_image_1, contract_image_2]:
+            if f is not None:
+                f.file.seek(0)
 
-        # Upload contract images
-        contract_images_urls = [
-            upload_image_to_s3(contract_image_1, "contracts"),
-            upload_image_to_s3(contract_image_2, "contracts"),
-            upload_image_to_s3(contract_image_3, "contracts"),
-            upload_image_to_s3(contract_image_4, "contracts"),
-            upload_image_to_s3(contract_image_5, "contracts"),
-        ]
+        # Asosiy hujjatlar
+        passport_copy_url = await upload_image_to_s3(passport_copy, "student-documents")
+        form_086_url = await upload_image_to_s3(form_086, "student-documents")
+        heart_checkup_url = await upload_image_to_s3(heart_checkup, "student-documents")
+        birth_certificate_url = await upload_image_to_s3(birth_certificate, "student-documents")
+
+        contract_images_urls = []
+        if contract_image_1:
+            contract_images_urls.append(await upload_image_to_s3(contract_image_1, "contracts"))
+        if contract_image_2:
+            contract_images_urls.append(await upload_image_to_s3(contract_image_2, "contracts"))
+
+
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error uploading files to S3: {str(e)}")
 
@@ -726,9 +742,11 @@ async def create_student_with_contract(
             raise ContractNumberAllocationError(
                 f"No available contract numbers for group {group.name} and birth year {birth_year}"
             )
-
         sequence_number = available_numbers[0]
-        contract_number = f"N{sequence_number}{birth_year}"
+        contract_number = contract_info.get("contract_number")
+        if not contract_number:
+            raise HTTPException(status_code=400, detail="contract_number is required in contract_data")
+
     except ContractNumberAllocationError as e:
         # Rollback student creation if contract number allocation fails
         await db.rollback()
@@ -737,23 +755,61 @@ async def create_student_with_contract(
     # Parse contract dates
     start_date_str = shartnoma_muddati.get("boshlanish")
     end_date_str = shartnoma_muddati.get("tugash")
-    monthly_fee = tolov.get("oylik_narx", 0)
+    year_val = shartnoma_muddati.get("yil")
+    monthly_fee_raw = tolov.get("oylik_narx", 0)
 
-    if start_date_str and isinstance(start_date_str, str):
-        start_date = datetime.strptime(start_date_str, "%Y-%m-%d").date()
-    else:
-        start_date = datetime.now().date()
 
-    if end_date_str and isinstance(end_date_str, str):
-        end_date = datetime.strptime(end_date_str, "%Y-%m-%d").date()
-    else:
-        from dateutil.relativedelta import relativedelta
-        end_date = start_date + relativedelta(years=1)
+    try:
+        if isinstance(monthly_fee_raw, str):
+            # Masalan: "600 000" yoki "600,000" yoki "600000"
+            cleaned = monthly_fee_raw.replace(" ", "").replace(",", "")
+            monthly_fee = Decimal(cleaned)
+        else:
+            monthly_fee = Decimal(monthly_fee_raw)
+    except (InvalidOperation, TypeError, ValueError):
+        raise HTTPException(
+            status_code=400,
+            detail=f"To‘lov miqdati noto‘g‘ri formatda yuborilgan: {monthly_fee_raw!r}"
+        )
+
+    # --- Sana formatlarini tekshirish (boshlanish) ---
+    try:
+        if start_date_str:
+            # Foydalanuvchi "2025-01-01" formatda yuboradi
+            start_date = datetime.strptime(start_date_str, "%Y-%m-%d").date()
+        else:
+            raise ValueError("boshlanish sanasi kiritilmagan")
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"Sana formati noto‘g‘ri (boshlanish): {str(e)}")
+
+    # --- Tugash sanasi ---
+    try:
+        if end_date_str and end_date_str.isdigit():
+            # Masalan: "31" → 31 dekabr {yil}
+            end_date = datetime(int(year_val or start_date.year), 12, int(end_date_str)).date()
+        elif end_date_str:
+            # Agar foydalanuvchi ISO formatda yuborsa
+            end_date = datetime.strptime(end_date_str, "%Y-%m-%d").date()
+        else:
+            # Tugash kiritilmagan bo‘lsa — 1 yilga uzaytiramiz
+            end_date = start_date + relativedelta(years=1)
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"Sana formati noto‘g‘ri (tugash): {str(e)}")
+
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"Sana formati noto‘g‘ri (tugash): {str(e)}")
 
     # Convert data to JSON strings for storage
     contract_images_json_str = json.dumps(contract_images_urls)
     custom_fields_json_str = json.dumps(contract_info, ensure_ascii=False, default=str)
-
+    existing_contract = await db.execute(
+        select(Contract).where(Contract.contract_number == contract_number)
+    )
+    if existing_contract.scalar():
+        raise HTTPException(
+            status_code=400,
+            detail=f"Shartnoma raqami '{contract_number}' allaqachon mavjud."
+        )
     # Create contract in ACTIVE status (no signature needed)
     contract = Contract(
         contract_number=contract_number,
@@ -808,22 +864,38 @@ async def create_student_with_contract(
     }
 
     # Generate PDF in temp file
+    import time
+
     temp_pdf = tempfile.NamedTemporaryFile(delete=False, suffix=".pdf")
+    pdf_path = temp_pdf.name
+    temp_pdf.close()  # ❗ Fayl descriptorni yopamiz
+
     try:
         generator = ContractPDFGenerator(pdf_data)
-        pdf_path = generator.generate(temp_pdf.name)
 
-        # Return PDF file
+        output_path = pdf_path  # original temp fayl nomi
+        generated_pdf_path = generator.generate(output_path)
+
+        # ✅ Himoya: generate() hech narsa qaytarmasa yoki dict qaytarsa
+        if not generated_pdf_path or not isinstance(generated_pdf_path, (str, os.PathLike)):
+            raise ValueError(f"ContractPDFGenerator.generate() noto‘g‘ri qiymat qaytardi: {type(generated_pdf_path)}")
+
+        # Return PDF response (FastAPI uni o‘zi o‘qiydi)
         return FileResponse(
-            path=pdf_path,
+            path=generated_pdf_path,
             filename=f"contract_{contract_number}.pdf",
-            media_type="application/pdf",
-            background=None  # Don't delete file immediately, let FastAPI handle it
+            media_type="application/pdf"
         )
+
     except Exception as e:
-        # Clean up temp file on error
-        if os.path.exists(temp_pdf.name):
-            os.unlink(temp_pdf.name)
+        # Faylni xavfsiz o‘chirish
+        try:
+            time.sleep(0.2)  # Windows lock'ni ozgina kutish
+            if os.path.exists(pdf_path):
+                os.unlink(pdf_path)
+        except PermissionError:
+            print(f"⚠️ Fayl o‘chirilmadi (lock): {pdf_path}")
+
         raise HTTPException(status_code=500, detail=f"Error generating PDF: {str(e)}")
 
 
