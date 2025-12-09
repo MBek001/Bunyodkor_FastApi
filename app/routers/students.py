@@ -666,7 +666,8 @@ async def create_student_with_contract(
     from app.services.contract_allocation import (
         get_available_contract_numbers,
         is_group_full,
-        ContractNumberAllocationError
+        ContractNumberAllocationError,
+        validate_contract_number
     )
     import json
     import os
@@ -778,22 +779,25 @@ async def create_student_with_contract(
     await db.commit()
     await db.refresh(student)
 
-    # Allocate contract number AUTOMATICALLY (user cannot choose)
-    try:
-        available_numbers = await get_available_contract_numbers(db, group_id, birth_year, current_year)
-        if not available_numbers:
-            raise ContractNumberAllocationError(
-                f"No available contract numbers for group {group.name} and birth year {birth_year}. Group is full!"
-            )
-
-        # IMPORTANT: Use first available number (cannot skip or choose custom)
-        sequence_number = available_numbers[0]
-        contract_number = f"N{sequence_number}{birth_year}"  # Auto-generate: N12017, N22015, etc.
-
-    except ContractNumberAllocationError as e:
-        # Rollback student creation if contract number allocation fails
+    # Get contract number from user input (REQUIRED)
+    contract_number = contract_info.get("contract_number")
+    if not contract_number:
         await db.rollback()
-        raise HTTPException(status_code=400, detail=str(e))
+        raise HTTPException(
+            status_code=400,
+            detail="contract_number is required in contract_data. Use GET /contracts/available-numbers/{group_id}/{birth_year} to see available numbers."
+        )
+
+    # Validate contract number
+    is_valid, message, sequence_number = await validate_contract_number(
+        db, contract_number, group_id, birth_year, current_year
+    )
+
+    if not is_valid:
+        await db.rollback()
+        raise HTTPException(status_code=400, detail=message)
+
+    # All validations passed - contract number is available!
 
     # Parse contract dates
     start_date_str = shartnoma_muddati.get("boshlanish")

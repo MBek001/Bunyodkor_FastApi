@@ -6,7 +6,9 @@ Format: N{sequence}{year}
 Examples: N12020, N22020, N32020 for students born in 2020
           N12012, N22012, N32012 for students born in 2012
 
-When a contract is canceled, the number becomes available for reuse.
+IMPORTANT: Once a contract number is used, it can NEVER be reused.
+Only the status changes (ACTIVE -> EXPIRED -> TERMINATED).
+The number itself remains reserved forever for that birth year in that group.
 """
 from datetime import date
 from sqlalchemy import select, and_, or_
@@ -53,15 +55,16 @@ async def get_available_contract_numbers(
     if not group:
         raise ContractNumberAllocationError(f"Group with ID {group_id} not found")
 
-    # Get all used sequence numbers for this birth year in this group for the archive year
-    # IMPORTANT: Only count ACTIVE contracts for capacity limit (NOT EXPIRED)
+    # Get ALL EVER USED sequence numbers for this birth year in this group
+    # IMPORTANT: We check ALL statuses (ACTIVE, EXPIRED, TERMINATED, ARCHIVED)
+    # Once a number is used, it can NEVER be reused - only status changes
     contracts_result = await db.execute(
         select(Contract.sequence_number).where(
             and_(
                 Contract.group_id == group_id,
                 Contract.birth_year == birth_year,
-                Contract.archive_year == archive_year,
-                Contract.status == ContractStatus.ACTIVE  # Only ACTIVE contracts count!
+                Contract.archive_year == archive_year
+                # NO status filter - all contracts count!
             )
         )
     )
@@ -185,31 +188,93 @@ async def get_next_available_sequence(
     return available[0] if available else None
 
 
-async def free_contract_number(
+async def validate_contract_number(
     db: AsyncSession,
-    contract_id: int
-) -> bool:
+    contract_number: str,
+    group_id: int,
+    birth_year: int,
+    archive_year: Optional[int] = None
+) -> tuple[bool, str, Optional[int]]:
     """
-    Free a contract number by marking the contract as terminated.
-
-    This makes the contract number available for reuse.
+    Validate if a contract number is available for use.
 
     Args:
         db: Database session
-        contract_id: Contract ID to free
+        contract_number: Contract number to validate (e.g., "N32017")
+        group_id: Group ID
+        birth_year: Student's birth year
+        archive_year: Archive year filter (defaults to current year)
 
     Returns:
-        True if successful, False otherwise
+        Tuple of (is_valid, message, sequence_number)
+        - is_valid: True if number is available
+        - message: Error/success message
+        - sequence_number: Extracted sequence number if valid
     """
-    contract_result = await db.execute(select(Contract).where(Contract.id == contract_id))
-    contract = contract_result.scalar_one_or_none()
+    from datetime import datetime
+    if archive_year is None:
+        archive_year = datetime.now().year
 
-    if not contract:
-        return False
+    # Parse contract number (format: N{seq}{year})
+    try:
+        if not contract_number.startswith('N'):
+            return False, "Contract number must start with 'N'", None
 
-    # Contract numbers are freed when status is TERMINATED
-    # The contract itself remains in DB for history, but the number becomes available
-    contract.status = ContractStatus.TERMINATED
+        # Extract parts
+        rest = contract_number[1:]  # Remove 'N'
 
-    await db.commit()
-    return True
+        # Find where year starts (last 4 digits)
+        if len(rest) < 5:  # At least 1 digit for seq + 4 for year
+            return False, f"Contract number format invalid: {contract_number}", None
+
+        year_str = rest[-4:]
+        seq_str = rest[:-4]
+
+        try:
+            extracted_year = int(year_str)
+            sequence_number = int(seq_str)
+        except ValueError:
+            return False, f"Cannot parse contract number: {contract_number}", None
+
+        # Validate year matches
+        if extracted_year != birth_year:
+            return False, f"Contract year {extracted_year} does not match student birth year {birth_year}", None
+
+    except Exception as e:
+        return False, f"Invalid contract number format: {str(e)}", None
+
+    # Get group capacity
+    group_result = await db.execute(select(Group).where(Group.id == group_id))
+    group = group_result.scalar_one_or_none()
+
+    if not group:
+        return False, f"Group {group_id} not found", None
+
+    # Check if sequence is within capacity
+    if sequence_number < 1 or sequence_number > group.capacity:
+        return False, f"Sequence number {sequence_number} is out of range (1-{group.capacity})", None
+
+    # Check if this exact contract number already exists
+    existing = await db.execute(
+        select(Contract).where(
+            and_(
+                Contract.contract_number == contract_number,
+                Contract.archive_year == archive_year
+            )
+        )
+    )
+    if existing.scalar_one_or_none():
+        return False, f"Contract number {contract_number} is already used", None
+
+    # Get available numbers
+    available_numbers = await get_available_contract_numbers(db, group_id, birth_year, archive_year)
+
+    if sequence_number not in available_numbers:
+        # Find next available
+        next_available = available_numbers[0] if available_numbers else None
+        if next_available:
+            return False, f"Number {sequence_number} is already used. Next available: N{next_available}{birth_year}", next_available
+        else:
+            return False, f"No available numbers for birth year {birth_year} in this group", None
+
+    return True, f"Contract number {contract_number} is available", sequence_number
