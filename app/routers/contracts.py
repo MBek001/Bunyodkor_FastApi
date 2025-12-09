@@ -557,29 +557,33 @@ async def get_next_available_number(
     ))
 
 
-@router.get("/{year}/{contract_id}/pdf", dependencies=[Depends(require_permission(PERM_CONTRACTS_VIEW))])
+@router.get("/{year}/{contract_number}/pdf", dependencies=[Depends(require_permission(PERM_CONTRACTS_VIEW))])
 async def get_contract_pdf(
     year: int,
-    contract_id: int,
+    contract_number: str,
     db: Annotated[AsyncSession, Depends(get_db)],
 ):
     """
-    Get contract PDF by year and contract ID.
+    Get contract PDF by year and contract NUMBER.
 
     The PDF is retrieved from S3 storage (final_pdf_url field).
 
     Args:
         year: Archive year (e.g., 2025, 2026)
-        contract_id: Contract ID
+        contract_number: Contract number (e.g., "N12017", "N52015")
 
     Returns:
         Redirect to S3 PDF URL or 404 if not found
+
+    Example:
+        GET /contracts/2025/N12017/pdf
+        → Returns PDF for contract N12017 from year 2025
     """
-    # Find contract
+    # Find contract by NUMBER and year
     result = await db.execute(
         select(Contract).where(
             and_(
-                Contract.id == contract_id,
+                Contract.contract_number == contract_number,
                 Contract.archive_year == year
             )
         )
@@ -589,13 +593,13 @@ async def get_contract_pdf(
     if not contract:
         raise HTTPException(
             status_code=404,
-            detail=f"Contract with ID {contract_id} for year {year} not found"
+            detail=f"Contract {contract_number} for year {year} not found"
         )
 
     if not contract.final_pdf_url:
         raise HTTPException(
             status_code=404,
-            detail="PDF not generated for this contract yet"
+            detail=f"PDF not generated for contract {contract_number} yet"
         )
 
     # Redirect to S3 URL
