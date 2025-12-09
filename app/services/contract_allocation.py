@@ -54,16 +54,14 @@ async def get_available_contract_numbers(
         raise ContractNumberAllocationError(f"Group with ID {group_id} not found")
 
     # Get all used sequence numbers for this birth year in this group for the archive year
+    # IMPORTANT: Only count ACTIVE contracts for capacity limit (NOT EXPIRED)
     contracts_result = await db.execute(
         select(Contract.sequence_number).where(
             and_(
                 Contract.group_id == group_id,
                 Contract.birth_year == birth_year,
                 Contract.archive_year == archive_year,
-                or_(
-                    Contract.status == ContractStatus.ACTIVE,
-                    Contract.status == ContractStatus.EXPIRED
-                )
+                Contract.status == ContractStatus.ACTIVE  # Only ACTIVE contracts count!
             )
         )
     )
@@ -158,15 +156,13 @@ async def is_group_full(
         return len(available) == 0
     else:
         # Check overall capacity across all birth years for the archive year
+        # IMPORTANT: Only ACTIVE contracts count toward capacity limit
         contracts_result = await db.execute(
             select(Contract).where(
                 and_(
                     Contract.group_id == group_id,
                     Contract.archive_year == archive_year,
-                    or_(
-                        Contract.status == ContractStatus.ACTIVE,
-                        Contract.status == ContractStatus.EXPIRED
-                    )
+                    Contract.status == ContractStatus.ACTIVE  # Only ACTIVE!
                 )
             )
         )
