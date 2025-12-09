@@ -572,7 +572,7 @@ from decimal import Decimal, InvalidOperation
 from fastapi import HTTPException
 
 
-@router.post("/create-with-contract", response_class=FileResponse)
+@router.post("/create-with-contract")
 async def create_student_with_contract(
     user: Annotated[User, Depends(require_permission(PERM_STUDENTS_EDIT))],
     db: Annotated[AsyncSession, Depends(get_db)],
@@ -637,7 +637,7 @@ async def create_student_with_contract(
           "tarbiyalanuvchi": {
             "fio": "Юсупов Абдулборий Баҳодирович",
             "tugilganlik_guvohnoma": "I-AA 9876543",
-            "tugilganlik_yil": "2011",
+            "tugilganlik_yil": 2011,
             "guvohnoma_kim_bergan": "Тошкент ш. ФҲБ Чилонзор т. бўлими",
             "guvohnoma_qachon_bergan": "12.04.2012"
           },

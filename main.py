@@ -20,7 +20,6 @@ from app.routers import (
     import_router,
     backup,
     waiting_list,
-    signatures,
     uploads,
     archive,
 )
@@ -110,7 +109,6 @@ app.include_router(public.router)
 app.include_router(import_router.router)
 app.include_router(backup.router)
 app.include_router(waiting_list.router)
-app.include_router(signatures.router)
 app.include_router(uploads.router)
 app.include_router(archive.router)
 

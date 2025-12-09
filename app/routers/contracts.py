@@ -307,19 +307,6 @@ async def bulk_delete_contracts(
     })
 
 
-@router.get("/pdf/{contract_number}", response_class=FileResponse)
-async def get_contract_pdf(contract_number: str):
-    """
-    Get generated contract PDF by contract number.
-
-    The PDF file should exist in temp_pdfs/ directory after contract creation.
-    """
-    file_path = f"temp_pdfs/contract_{contract_number}.pdf"
-    if not os.path.exists(file_path):
-        raise HTTPException(status_code=404, detail="PDF file not found")
-
-    return FileResponse(path=file_path, media_type="application/pdf", filename=f"{contract_number}.pdf")
-
 
 @router.post("/create-with-files", response_class=FileResponse, deprecated=True)
 async def create_contract_with_file_upload(
