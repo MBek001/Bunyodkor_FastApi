@@ -113,10 +113,19 @@ async def get_students(
     search: Optional[str] = None,
     group_id: Optional[int] = None,
     status: Optional[str] = None,
+    archive_year: int | None = Query(None, description="Filter by archive year (defaults to current year)"),
     page: int = Query(1, ge=1),
     page_size: int = Query(20, ge=1, le=100),
 ):
-    query = select(Student)
+    """
+    Get all students with optional filters.
+    Default: Only shows current year's students
+    """
+    from datetime import datetime as dt
+    if archive_year is None:
+        archive_year = dt.now().year
+
+    query = select(Student).where(Student.archive_year == archive_year)
 
     if search:
         query = query.where(
@@ -134,7 +143,7 @@ async def get_students(
     result = await db.execute(query.offset(offset).limit(page_size))
     students = result.scalars().all()
 
-    count_query = select(func.count(Student.id))
+    count_query = select(func.count(Student.id)).where(Student.archive_year == archive_year)
     if search:
         count_query = count_query.where(
             or_(
@@ -720,6 +729,9 @@ async def create_student_with_contract(
         from datetime import datetime
         date_of_birth = datetime.strptime(date_of_birth, "%Y-%m-%d").date()
 
+    # Get current year for archive
+    current_year = datetime.now().year
+
     # Create student
     student_status = StudentStatus.ACTIVE if status.lower() == "active" else StudentStatus.INACTIVE
     student = Student(
@@ -729,7 +741,8 @@ async def create_student_with_contract(
         phone=phone,
         address=address,
         status=student_status,
-        group_id=group_id
+        group_id=group_id,
+        archive_year=current_year  # Set current year as archive year
     )
     db.add(student)
     await db.commit()
@@ -737,7 +750,7 @@ async def create_student_with_contract(
 
     # Allocate contract number
     try:
-        available_numbers = await get_available_contract_numbers(db, group_id, birth_year)
+        available_numbers = await get_available_contract_numbers(db, group_id, birth_year, current_year)
         if not available_numbers:
             raise ContractNumberAllocationError(
                 f"No available contract numbers for group {group.name} and birth year {birth_year}"
@@ -821,6 +834,7 @@ async def create_student_with_contract(
         status=ContractStatus.ACTIVE,
         student_id=student.id,
         group_id=group_id,
+        archive_year=current_year,  # Set current year as archive year
         passport_copy_url=passport_copy_url,
         form_086_url=form_086_url,
         heart_checkup_url=heart_checkup_url,
