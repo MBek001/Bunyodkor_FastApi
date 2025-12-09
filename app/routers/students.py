@@ -710,10 +710,16 @@ async def create_student_with_contract(
     shartnoma_muddati = contract_info.get("shartnoma_muddati", {})
     tolov = contract_info.get("tolov", {})
 
-    # Get birth year
+    # Get birth year and convert to integer
     birth_year = tarbiyalanuvchi.get("tugilganlik_yil")
     if not birth_year:
         raise HTTPException(status_code=400, detail="tugilganlik_yil is required in contract_data.tarbiyalanuvchi")
+
+    # Convert to integer if string
+    try:
+        birth_year = int(birth_year)
+    except (ValueError, TypeError):
+        raise HTTPException(status_code=400, detail=f"tugilganlik_yil must be a valid year (integer): {birth_year}")
 
     # Validate group exists
     group_result = await db.execute(select(Group).where(Group.id == group_id))

@@ -33,12 +33,15 @@ async def upload_image_to_s3(file: UploadFile, folder: str = "contracts") -> str
         extension = file.filename.split('.')[-1]
         key = f"{folder}/{uuid4()}.{extension}"
 
-        # Yuklash
+        # Yuklash (public-read ACL for image access from PDF generation)
         s3.upload_fileobj(
             Fileobj=buffer,
             Bucket=AWS_BUCKET_NAME,
             Key=key,
-            ExtraArgs={"ContentType": file.content_type}
+            ExtraArgs={
+                "ContentType": file.content_type,
+                "ACL": "public-read"  # Make images publicly accessible
+            }
         )
 
         return f"https://{AWS_BUCKET_NAME}.s3.{AWS_REGION}.amazonaws.com/{key}"
@@ -69,12 +72,15 @@ def upload_pdf_to_s3(pdf_file_path: str, contract_number: str, folder: str = "co
         # Create unique key
         key = f"{folder}/{contract_number}_{uuid4()}.pdf"
 
-        # Upload to S3
+        # Upload to S3 (public-read for easy access)
         s3.upload_fileobj(
             Fileobj=buffer,
             Bucket=AWS_BUCKET_NAME,
             Key=key,
-            ExtraArgs={"ContentType": "application/pdf"}
+            ExtraArgs={
+                "ContentType": "application/pdf",
+                "ACL": "public-read"  # Make PDF publicly accessible
+            }
         )
 
         return f"https://{AWS_BUCKET_NAME}.s3.{AWS_REGION}.amazonaws.com/{key}"
