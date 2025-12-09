@@ -609,49 +609,49 @@ async def create_student_with_contract(
     **contract_data JSON structure:**
     ```json
      {
+          "contract_number": "N52012",
+          "student": {
+            "student_image": "student_photo.png",
+            "student_fio": "Юсупов Абдулборий Баҳодирович",
+            "birth_year": "2012",
+            "student_address": "Тошкент ш. Чилонзор т. Лутфий кўчаси 61-уй",
+            "dad_occupation": "Тадбиркор",
+            "mom_occupation": "Уй бекаси",
+            "dad_phone_number": "(33) 135-80-09",
+            "mom_phone_number": "(78) 162-16-14",
+            "mom_fullname": "Бахриддинова Гулова Баҳромовна"
+          },
+          "sana": {
+            "kun": "06",
+            "oy": "Декабр",
+            "yil": "2025"
+          },
+          "buyurtmachi": {
+            "fio": "Юсупов Абдулборий Баҳодирович",
+            "pasport_seriya": "AA 1234567",
+            "pasport_kim_bergan": "Тошкент ш. Чилонзор т. ИИББ бўлими",
+            "pasport_qachon_bergan": "15.03.2018",
+            "manzil": "Тошкент ш., Чилонзор тумани, Лутфий кўчаси 61-уй",
+            "telefon": "+998 (33) 135-80-09"
+          },
+          "tarbiyalanuvchi": {
+            "fio": "Юсупов Абдулборий Баҳодирович",
+            "tugilganlik_guvohnoma": "I-AA 9876543",
+            "tugilganlik_yil": "2011",
+            "guvohnoma_kim_bergan": "Тошкент ш. ФҲБ Чилонзор т. бўлими",
+            "guvohnoma_qachon_bergan": "12.04.2012"
+          },
+          "shartnoma_muddati": {
+            "boshlanish": "2026-01-06",
+            "tugash": "2026-12-06",
+            "yil": "2025"
+          },
+          "tolov": {
+            "oylik_narx": "600 000",
+            "oylik_narx_sozlar": "олти юз минг"
+          }
+    }
 
-            "shartnoma_raqami": "N0012025",
-            "student": {
-                "student_image": "student_photo.png",
-                "student_fio": "Юсупов Абдулборий Баҳодирович",
-                "birth_year": "2012",
-                "student_address": "Тошкент ш. Чилонзор т. Лутфий кўчаси 61-уй",
-                "dad_occupation": "Тадбиркор",
-                "mom_occupation": "Уй бекаси",
-                "dad_phone_number": "(33) 135-80-09",
-                "mom_phone_number": "(78) 162-16-14",
-                "mom_fullname": "Бахриддинова Гулова Баҳромовна"
-            },
-            "sana": {
-                "kun": "06",
-                "oy": "Декабр",
-                "yil": "2025"
-            },
-            "buyurtmachi": {
-                "fio": "Юсупов Абдулборий Баҳодирович",
-                "pasport_seriya": "AA 1234567",
-                "pasport_kim_bergan": "Тошкент ш. Чилонзор т. ИИББ бўлими",
-                "pasport_qachon_bergan": "15.03.2018",
-                "manzil": "Тошкент ш., Чилонзор тумани, Лутфий кўчаси 61-уй",
-                "telefon": "+998 (33) 135-80-09"
-            },
-            "tarbiyalanuvchi": {
-                "fio": "Юсупов Абдулборий Баҳодирович",
-                "tugilganlik_guvohnoma": "I-AA 9876543",
-                "tugilganlik_yil": 2011,
-                "guvohnoma_kim_bergan": "Тошкент ш. ФҲБ Чилонзор т. бўлими",
-                "guvohnoma_qachon_bergan": "12.04.2012"
-            },
-            "shartnoma_muddati": {
-                "boshlanish": "«01» Январ",
-                "tugash": "«31» Декабр",
-                "yil": "2025"
-            },
-            "tolov": {
-                "oylik_narx": "600 000",
-                "oylik_narx_sozlar": "олти юз минг"
-            }
-        }
     ```
 
     Complete workflow:
@@ -704,6 +704,7 @@ async def create_student_with_contract(
 
     # Extract contract fields
     buyurtmachi = contract_info.get("buyurtmachi", {})
+    studentInfo=contract_info.get("student", {})
     tarbiyalanuvchi = contract_info.get("tarbiyalanuvchi", {})
     shartnoma_muddati = contract_info.get("shartnoma_muddati", {})
     tolov = contract_info.get("tolov", {})
@@ -888,6 +889,7 @@ async def create_student_with_contract(
 
     pdf_data = {
         "shartnoma_raqami": contract_number,
+        "student": contract_info.get("student", {}),
         "sana": {
             "kun": f"{sana_obj.day:02d}",
             "oy": months_uz.get(sana_obj.month, ""),

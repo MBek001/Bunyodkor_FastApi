@@ -19,18 +19,30 @@ import tempfile
 
 
 # Try to find DejaVu fonts in common Linux locations
+# font_locations = [
+#     "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
+#     "/usr/share/fonts/dejavu/DejaVuSans.ttf",
+#     "/usr/local/share/fonts/DejaVuSans.ttf",
+#     r"C:\Users\Home\Downloads\dejavu-fonts-ttf-2.37\dejavu-fonts-ttf-2.37\ttf\DejaVuSans.ttf"  # Windows fallback
+# ]
+#
+# bold_font_locations = [
+#     "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
+#     "/usr/share/fonts/dejavu/DejaVuSans-Bold.ttf",
+#     "/usr/local/share/fonts/DejaVuSans-Bold.ttf",
+#     r"C:\Users\Home\Downloads\dejavu-fonts-ttf-2.37\dejavu-fonts-ttf-2.37\ttf\DejaVuSans-Bold.ttf"  # Windows fallback
+# ]
+
+
+BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))  # -> app/
+FONTS_DIR = os.path.join(BASE_DIR, "fonts")
+
 font_locations = [
-    "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
-    "/usr/share/fonts/dejavu/DejaVuSans.ttf",
-    "/usr/local/share/fonts/DejaVuSans.ttf",
-    r"C:\Users\Home\Downloads\dejavu-fonts-ttf-2.37\dejavu-fonts-ttf-2.37\ttf\DejaVuSans.ttf"  # Windows fallback
+    os.path.join(FONTS_DIR, "DejaVuSans.ttf"),
 ]
 
 bold_font_locations = [
-    "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
-    "/usr/share/fonts/dejavu/DejaVuSans-Bold.ttf",
-    "/usr/local/share/fonts/DejaVuSans-Bold.ttf",
-    r"C:\Users\Home\Downloads\dejavu-fonts-ttf-2.37\dejavu-fonts-ttf-2.37\ttf\DejaVuSans-Bold.ttf"  # Windows fallback
+    os.path.join(FONTS_DIR, "DejaVuSans-Bold.ttf"),
 ]
 
 # Find existing font files
@@ -46,7 +58,8 @@ for path in bold_font_locations:
     if os.path.exists(path):
         bold_font_path = path
         break
-
+print("✅ Normal font path:", font_path)
+print("✅ Bold font path:", bold_font_path)
 # Shriftlarni ro'yxatdan o'tkazish logikasi
 FONT_NORMAL = 'DejaVu'
 FONT_BOLD = 'DejaVu-Bold'

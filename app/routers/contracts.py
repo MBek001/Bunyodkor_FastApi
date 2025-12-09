@@ -29,7 +29,7 @@ from app.services.contract_allocation import (
     is_group_full,
     ContractNumberAllocationError
 )
-from app.utils.pdf_generator import ContractGenerator, convert_dates
+# from app.utils.pdf_generator import ContractGenerator, convert_dates
 
 router = APIRouter(prefix="/contracts", tags=["Contracts"])
 
