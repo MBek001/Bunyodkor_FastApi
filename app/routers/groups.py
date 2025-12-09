@@ -10,7 +10,7 @@ from app.schemas.group import GroupRead, GroupCreate, GroupUpdate, GroupCapacity
 from app.schemas.student import StudentRead
 from app.schemas.common import DataResponse, PaginationMeta
 from app.deps import require_permission
-from app.models.enums import ContractStatus
+from app.models.enums import ContractStatus, GroupStatus
 
 router = APIRouter(prefix="/groups", tags=["Groups"])
 
@@ -19,24 +19,36 @@ router = APIRouter(prefix="/groups", tags=["Groups"])
 async def get_groups(
     db: Annotated[AsyncSession, Depends(get_db)],
     archive_year: int | None = Query(None, description="Filter by archive year (defaults to current year)"),
+    include_archived: bool = Query(False, description="Include archived groups (default: only ACTIVE)"),
     page: int = Query(1, ge=1),
     page_size: int = Query(20, ge=1, le=100),
 ):
     """
-    Get all groups with optional archive year filter.
-    Default: Only shows current year's groups
+    Get all groups with optional filters.
+
+    Default behavior:
+    - Shows current year's ACTIVE groups only
+    - Archived groups are hidden unless include_archived=true
     """
     from datetime import datetime
+
     if archive_year is None:
         archive_year = datetime.now().year
 
     query = select(Group).where(Group.archive_year == archive_year)
+
+    # Default: only ACTIVE groups (exclude ARCHIVED)
+    if not include_archived:
+        query = query.where(Group.status == GroupStatus.ACTIVE)
 
     offset = (page - 1) * page_size
     result = await db.execute(query.offset(offset).limit(page_size))
     groups = result.scalars().all()
 
     count_query = select(func.count(Group.id)).where(Group.archive_year == archive_year)
+    if not include_archived:
+        count_query = count_query.where(Group.status == GroupStatus.ACTIVE)
+
     count_result = await db.execute(count_query)
     total = count_result.scalar()
 

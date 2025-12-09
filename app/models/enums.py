@@ -12,6 +12,13 @@ class StudentStatus(str, Enum):
     GRADUATED = "graduated"
     DROPPED = "dropped"
     SUSPENDED = "suspended"
+    ARCHIVED = "archived"  # For yearly archiving
+
+
+class GroupStatus(str, Enum):
+    """Group status for yearly archiving"""
+    ACTIVE = "active"
+    ARCHIVED = "archived"
 
 
 class ContractStatus(str, Enum):
@@ -19,6 +26,7 @@ class ContractStatus(str, Enum):
     ACTIVE = "active"
     EXPIRED = "expired"
     TERMINATED = "terminated"
+    ARCHIVED = "archived"  # For yearly archiving
 
 
 class PaymentStatus(str, Enum):
