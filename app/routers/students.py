@@ -13,6 +13,7 @@ from app.core.permissions import PERM_STUDENTS_VIEW, PERM_STUDENTS_EDIT
 from app.models.domain import Student
 from app.models.finance import Transaction
 from app.models.attendance import Attendance, GateLog
+from app.models.enums import StudentStatus, ContractStatus
 from app.schemas.student import StudentRead, StudentCreate, StudentUpdate, StudentDebtInfo, StudentFullInfo, ParentRead
 from app.schemas.contract import ContractRead
 from app.schemas.transaction import TransactionRead

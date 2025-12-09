@@ -21,12 +21,14 @@ def upgrade() -> None:
     Add status field to groups table and ARCHIVED status to enums.
     This enables yearly archiving of all data.
     """
-    # Add status column to groups table
+    # Add status column to groups table with lowercase 'active' (matching existing data pattern)
     op.add_column('groups', sa.Column('status', sa.String(20), nullable=False, server_default='active'))
     op.create_index('ix_groups_status', 'groups', ['status'])
 
-    # Note: StudentStatus and ContractStatus already have columns, we just extended the enum values
+    # Note: StudentStatus and ContractStatus already have status columns
+    # We're just adding new enum values (archived)
     # SQLAlchemy string-based enums don't require migration for new values
+    # All existing statuses will remain as lowercase ('active', 'expired', etc.)
 
 
 def downgrade() -> None:
