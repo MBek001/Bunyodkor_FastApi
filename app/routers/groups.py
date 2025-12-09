@@ -18,14 +18,26 @@ router = APIRouter(prefix="/groups", tags=["Groups"])
 @router.get("", response_model=DataResponse[list[GroupRead]], dependencies=[Depends(require_permission(PERM_GROUPS_VIEW))])
 async def get_groups(
     db: Annotated[AsyncSession, Depends(get_db)],
+    archive_year: int | None = Query(None, description="Filter by archive year (defaults to current year)"),
     page: int = Query(1, ge=1),
     page_size: int = Query(20, ge=1, le=100),
 ):
+    """
+    Get all groups with optional archive year filter.
+    Default: Only shows current year's groups
+    """
+    from datetime import datetime
+    if archive_year is None:
+        archive_year = datetime.now().year
+
+    query = select(Group).where(Group.archive_year == archive_year)
+
     offset = (page - 1) * page_size
-    result = await db.execute(select(Group).offset(offset).limit(page_size))
+    result = await db.execute(query.offset(offset).limit(page_size))
     groups = result.scalars().all()
 
-    count_result = await db.execute(select(func.count(Group.id)))
+    count_query = select(func.count(Group.id)).where(Group.archive_year == archive_year)
+    count_result = await db.execute(count_query)
     total = count_result.scalar()
 
     return DataResponse(
@@ -44,13 +56,17 @@ async def create_group(
     data: GroupCreate,
     db: Annotated[AsyncSession, Depends(get_db)],
 ):
+    """Create a new group with current year as archive year"""
     if data.coach_id:
         from app.models.auth import User
         coach_result = await db.execute(select(User).where(User.id == data.coach_id))
         if not coach_result.scalar_one_or_none():
             raise HTTPException(status_code=404, detail=f"Coach with ID {data.coach_id} not found")
 
-    group = Group(**data.model_dump())
+    from datetime import datetime
+    group_data = data.model_dump()
+    group_data['archive_year'] = datetime.now().year  # Set current year
+    group = Group(**group_data)
     db.add(group)
     await db.commit()
     await db.refresh(group)
@@ -166,6 +182,7 @@ async def bulk_delete_groups(
 async def get_group_capacity(
     group_id: int,
     db: Annotated[AsyncSession, Depends(get_db)],
+    archive_year: int | None = Query(None, description="Filter by archive year (defaults to current year)"),
 ):
     """
     Get detailed capacity information for a group.
@@ -181,6 +198,10 @@ async def get_group_capacity(
     - Seeing distribution of students by birth year
     - Managing group capacity
     """
+    from datetime import datetime
+    if archive_year is None:
+        archive_year = datetime.now().year
+
     # Get group
     group_result = await db.execute(select(Group).where(Group.id == group_id))
     group = group_result.scalar_one_or_none()
@@ -188,11 +209,12 @@ async def get_group_capacity(
     if not group:
         raise HTTPException(status_code=404, detail="Group not found")
 
-    # Get active and expired contracts for this group (not terminated)
+    # Get active and expired contracts for this group (not terminated) for the archive year
     contracts_result = await db.execute(
         select(Contract).where(
             and_(
                 Contract.group_id == group_id,
+                Contract.archive_year == archive_year,
                 or_(
                     Contract.status == ContractStatus.ACTIVE,
                     Contract.status == ContractStatus.EXPIRED

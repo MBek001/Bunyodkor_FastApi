@@ -21,6 +21,9 @@ class Student(Base, TimestampMixin):
         SAEnum(StudentStatus, native_enum=False, length=20), default=StudentStatus.ACTIVE, nullable=False
     )
 
+    # Archive year - used for yearly data separation (2025, 2026, etc.)
+    archive_year: Mapped[int] = mapped_column(Integer, nullable=False, index=True, server_default="2025")
+
     group_id: Mapped[int | None] = mapped_column(ForeignKey("groups.id", ondelete="SET NULL"), nullable=True)
 
     group: Mapped["Group"] = relationship("Group", back_populates="students")
@@ -55,6 +58,9 @@ class Group(Base, TimestampMixin):
     schedule_time: Mapped[str | None] = mapped_column(String(50), nullable=True)
     capacity: Mapped[int] = mapped_column(Integer, default=100, nullable=False)  # Maximum number of students
 
+    # Archive year - used for yearly data separation (2025, 2026, etc.)
+    archive_year: Mapped[int] = mapped_column(Integer, nullable=False, index=True, server_default="2025")
+
     coach_id: Mapped[int | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
 
     coach: Mapped["User"] = relationship("User")
@@ -74,6 +80,9 @@ class Contract(Base, TimestampMixin):
     status: Mapped[ContractStatus] = mapped_column(
         SAEnum(ContractStatus, native_enum=False, length=20), default=ContractStatus.ACTIVE, nullable=False
     )
+
+    # Archive year - used for yearly data separation (2025, 2026, etc.)
+    archive_year: Mapped[int] = mapped_column(Integer, nullable=False, index=True, server_default="2025")
 
     # Contract number allocation fields
     birth_year: Mapped[int] = mapped_column(Integer, nullable=False, index=True)  # Student birth year for contract numbering

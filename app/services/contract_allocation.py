@@ -24,7 +24,8 @@ class ContractNumberAllocationError(Exception):
 async def get_available_contract_numbers(
     db: AsyncSession,
     group_id: int,
-    birth_year: int
+    birth_year: int,
+    archive_year: Optional[int] = None
 ) -> List[int]:
     """
     Get list of available contract numbers for a group and birth year.
@@ -36,10 +37,15 @@ async def get_available_contract_numbers(
         db: Database session
         group_id: Group ID
         birth_year: Student's birth year
+        archive_year: Archive year filter (defaults to current year)
 
     Returns:
         List of available sequence numbers
     """
+    from datetime import datetime
+    if archive_year is None:
+        archive_year = datetime.now().year
+
     # Get group capacity
     group_result = await db.execute(select(Group).where(Group.id == group_id))
     group = group_result.scalar_one_or_none()
@@ -47,12 +53,13 @@ async def get_available_contract_numbers(
     if not group:
         raise ContractNumberAllocationError(f"Group with ID {group_id} not found")
 
-    # Get all used sequence numbers for this birth year in this group
+    # Get all used sequence numbers for this birth year in this group for the archive year
     contracts_result = await db.execute(
         select(Contract.sequence_number).where(
             and_(
                 Contract.group_id == group_id,
                 Contract.birth_year == birth_year,
+                Contract.archive_year == archive_year,
                 or_(
                     Contract.status == ContractStatus.ACTIVE,
                     Contract.status == ContractStatus.EXPIRED
@@ -119,7 +126,8 @@ async def allocate_contract_number(
 async def is_group_full(
     db: AsyncSession,
     group_id: int,
-    birth_year: Optional[int] = None
+    birth_year: Optional[int] = None,
+    archive_year: Optional[int] = None
 ) -> bool:
     """
     Check if a group is full.
@@ -128,10 +136,15 @@ async def is_group_full(
         db: Database session
         group_id: Group ID
         birth_year: Optional birth year to check capacity for specific year
+        archive_year: Archive year filter (defaults to current year)
 
     Returns:
         True if group is full, False otherwise
     """
+    from datetime import datetime
+    if archive_year is None:
+        archive_year = datetime.now().year
+
     # Get group capacity
     group_result = await db.execute(select(Group).where(Group.id == group_id))
     group = group_result.scalar_one_or_none()
@@ -141,14 +154,15 @@ async def is_group_full(
 
     if birth_year:
         # Check capacity for specific birth year
-        available = await get_available_contract_numbers(db, group_id, birth_year)
+        available = await get_available_contract_numbers(db, group_id, birth_year, archive_year)
         return len(available) == 0
     else:
-        # Check overall capacity across all birth years
+        # Check overall capacity across all birth years for the archive year
         contracts_result = await db.execute(
             select(Contract).where(
                 and_(
                     Contract.group_id == group_id,
+                    Contract.archive_year == archive_year,
                     or_(
                         Contract.status == ContractStatus.ACTIVE,
                         Contract.status == ContractStatus.EXPIRED
