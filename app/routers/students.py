@@ -114,18 +114,26 @@ async def get_students(
     group_id: Optional[int] = None,
     status: Optional[str] = None,
     archive_year: int | None = Query(None, description="Filter by archive year (defaults to current year)"),
+    include_archived: bool = Query(False, description="Include archived students (default: only non-ARCHIVED)"),
     page: int = Query(1, ge=1),
     page_size: int = Query(20, ge=1, le=100),
 ):
     """
     Get all students with optional filters.
-    Default: Only shows current year's students
+
+    Default behavior:
+    - Shows current year's students only
+    - Excludes ARCHIVED students unless include_archived=true
     """
     from datetime import datetime as dt
     if archive_year is None:
         archive_year = dt.now().year
 
     query = select(Student).where(Student.archive_year == archive_year)
+
+    # Default: exclude ARCHIVED students
+    if not include_archived:
+        query = query.where(Student.status != StudentStatus.ARCHIVED)
 
     if search:
         query = query.where(
@@ -144,6 +152,8 @@ async def get_students(
     students = result.scalars().all()
 
     count_query = select(func.count(Student.id)).where(Student.archive_year == archive_year)
+    if not include_archived:
+        count_query = count_query.where(Student.status != StudentStatus.ARCHIVED)
     if search:
         count_query = count_query.where(
             or_(

@@ -3,7 +3,7 @@ from sqlalchemy import String, Date, DateTime, Integer, Numeric, Text, Enum as S
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 from app.core.db import Base
 from app.models.base import TimestampMixin
-from app.models.enums import StudentStatus, ContractStatus, DayOfWeek
+from app.models.enums import StudentStatus, ContractStatus, DayOfWeek, GroupStatus
 
 
 class Student(Base, TimestampMixin):
@@ -57,6 +57,9 @@ class Group(Base, TimestampMixin):
     schedule_days: Mapped[str | None] = mapped_column(String(255), nullable=True)
     schedule_time: Mapped[str | None] = mapped_column(String(50), nullable=True)
     capacity: Mapped[int] = mapped_column(Integer, default=100, nullable=False)  # Maximum number of students
+    status: Mapped[GroupStatus] = mapped_column(
+        SAEnum(GroupStatus, native_enum=False, length=20), default=GroupStatus.ACTIVE, nullable=False, index=True
+    )
 
     # Archive year - used for yearly data separation (2025, 2026, etc.)
     archive_year: Mapped[int] = mapped_column(Integer, nullable=False, index=True, server_default="2025")
