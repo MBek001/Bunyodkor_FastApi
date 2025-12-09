@@ -15,7 +15,7 @@ from PyPDF2 import PdfMerger
 from reportlab.pdfgen import canvas
 from reportlab.lib.pagesizes import A4
 import tempfile
-from PIL import Image
+
 
 
 # Try to find DejaVu fonts in common Linux locations
@@ -255,6 +255,8 @@ class ContractPDFGenerator:
     def _default_template(self):
         """Default template ma'lumotlari (agar JSON topilmasa)"""
         return {
+
+            "shartnoma_raqami": "N0012025",
             "student": {
                 "student_image": "student_photo.png",
                 "student_fio": "Юсупов Абдулборий Баҳодирович",
@@ -266,7 +268,6 @@ class ContractPDFGenerator:
                 "mom_phone_number": "(78) 162-16-14",
                 "mom_fullname": "Бахриддинова Гулова Баҳромовна"
             },
-            "shartnoma_raqami": "N0012025",
             "sana": {
                 "kun": "06",
                 "oy": "Декабр",
@@ -283,6 +284,7 @@ class ContractPDFGenerator:
             "tarbiyalanuvchi": {
                 "fio": "Юсупов Абдулборий Баҳодирович",
                 "tugilganlik_guvohnoma": "I-AA 9876543",
+                "tugilganlik_yil": 2011,
                 "guvohnoma_kim_bergan": "Тошкент ш. ФҲБ Чилонзор т. бўлими",
                 "guvohnoma_qachon_bergan": "12.04.2012"
             },

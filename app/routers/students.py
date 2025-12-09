@@ -599,7 +599,6 @@ async def create_student_with_contract(
         "first_name": "Alvaro",
         "last_name": "Marata",
         "date_of_birth": "2010-12-06",
-        "contract_number":"",
         "phone": "998901234567",
         "address": "Toshkent shahar",
         "status": "active",
@@ -609,31 +608,50 @@ async def create_student_with_contract(
 
     **contract_data JSON structure:**
     ```json
-    {
-       "buyurtmachi": {
-        "fio": " Каримович Ахмедов  Каримович",
-        "pasport_seriya": "AA 1234567",
-        "pasport_kim_bergan": "Чилонзор тумани ИИБ",
-        "pasport_qachon_bergan": "01.01.2024",
-        "manzil": "Тошкент ш, Чилонзор тумани, 1-даха, 12-уй, 34-хонадон",
-        "telefon": "+998 90 123 45 67"
-    },
-    "tarbiyalanuvchi": {
-        "fio": "Ахмедов Шоҳруҳ Дилшодович",
-        "tugilganlik_guvohnoma": "I-AA 1234567",
-        "guvohnoma_kim_bergan": "Чилонзор тумани ФХДЁ бўлими илонзор тумани",
-        "guvohnoma_qachon_bergan": "01.01.2016"
-    },
-    "shartnoma_muddati": {
-        "boshlanish": "2025-01-01",
-        "tugash": "31",
-         "yil": 2030
-    },
-    "tolov": {
-        "oylik_narx": "600 000",
-        "oylik_narx_sozlar": "олти юз минг"
-    }
-    }
+     {
+
+            "shartnoma_raqami": "N0012025",
+            "student": {
+                "student_image": "student_photo.png",
+                "student_fio": "Юсупов Абдулборий Баҳодирович",
+                "birth_year": "2012",
+                "student_address": "Тошкент ш. Чилонзор т. Лутфий кўчаси 61-уй",
+                "dad_occupation": "Тадбиркор",
+                "mom_occupation": "Уй бекаси",
+                "dad_phone_number": "(33) 135-80-09",
+                "mom_phone_number": "(78) 162-16-14",
+                "mom_fullname": "Бахриддинова Гулова Баҳромовна"
+            },
+            "sana": {
+                "kun": "06",
+                "oy": "Декабр",
+                "yil": "2025"
+            },
+            "buyurtmachi": {
+                "fio": "Юсупов Абдулборий Баҳодирович",
+                "pasport_seriya": "AA 1234567",
+                "pasport_kim_bergan": "Тошкент ш. Чилонзор т. ИИББ бўлими",
+                "pasport_qachon_bergan": "15.03.2018",
+                "manzil": "Тошкент ш., Чилонзор тумани, Лутфий кўчаси 61-уй",
+                "telefon": "+998 (33) 135-80-09"
+            },
+            "tarbiyalanuvchi": {
+                "fio": "Юсупов Абдулборий Баҳодирович",
+                "tugilganlik_guvohnoma": "I-AA 9876543",
+                "tugilganlik_yil": 2011,
+                "guvohnoma_kim_bergan": "Тошкент ш. ФҲБ Чилонзор т. бўлими",
+                "guvohnoma_qachon_bergan": "12.04.2012"
+            },
+            "shartnoma_muddati": {
+                "boshlanish": "«01» Январ",
+                "tugash": "«31» Декабр",
+                "yil": "2025"
+            },
+            "tolov": {
+                "oylik_narx": "600 000",
+                "oylik_narx_sozlar": "олти юз минг"
+            }
+        }
     ```
 
     Complete workflow:
