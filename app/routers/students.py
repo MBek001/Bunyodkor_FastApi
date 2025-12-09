@@ -22,7 +22,7 @@ from app.schemas.common import DataResponse, PaginationMeta
 from app.schemas.student_with_contract import StudentWithContractCreate, StudentWithContractResponse
 from app.deps import require_permission, CurrentUser
 from app.models.auth import User
-from app.core.s3 import upload_image_to_s3
+from app.core.s3 import upload_image_to_s3, upload_pdf_to_s3
 from app.utils.contract_pdf import ContractPDFGenerator
 
 router = APIRouter(prefix="/students", tags=["Students"])
@@ -778,17 +778,17 @@ async def create_student_with_contract(
     await db.commit()
     await db.refresh(student)
 
-    # Allocate contract number
+    # Allocate contract number AUTOMATICALLY (user cannot choose)
     try:
         available_numbers = await get_available_contract_numbers(db, group_id, birth_year, current_year)
         if not available_numbers:
             raise ContractNumberAllocationError(
-                f"No available contract numbers for group {group.name} and birth year {birth_year}"
+                f"No available contract numbers for group {group.name} and birth year {birth_year}. Group is full!"
             )
+
+        # IMPORTANT: Use first available number (cannot skip or choose custom)
         sequence_number = available_numbers[0]
-        contract_number = contract_info.get("contract_number")
-        if not contract_number:
-            raise HTTPException(status_code=400, detail="contract_number is required in contract_data")
+        contract_number = f"N{sequence_number}{birth_year}"  # Auto-generate: N12017, N22015, etc.
 
     except ContractNumberAllocationError as e:
         # Rollback student creation if contract number allocation fails
@@ -908,38 +908,82 @@ async def create_student_with_contract(
         }
     }
 
-    # Generate PDF in temp file
+    # Generate PDF with attachments (images at the end)
     import time
 
     temp_pdf = tempfile.NamedTemporaryFile(delete=False, suffix=".pdf")
     pdf_path = temp_pdf.name
-    temp_pdf.close()  # ❗ Fayl descriptorni yopamiz
+    temp_pdf.close()
 
     try:
         generator = ContractPDFGenerator(pdf_data)
 
-        output_path = pdf_path  # original temp fayl nomi
-        generated_pdf_path = generator.generate(output_path)
+        # Generate base PDF (contract text only)
+        base_pdf_path = generator.generate(pdf_path)
 
-        # ✅ Himoya: generate() hech narsa qaytarmasa yoki dict qaytarsa
-        if not generated_pdf_path or not isinstance(generated_pdf_path, (str, os.PathLike)):
-            raise ValueError(f"ContractPDFGenerator.generate() noto‘g‘ri qiymat qaytardi: {type(generated_pdf_path)}")
+        # Check if generation was successful
+        if not base_pdf_path or not isinstance(base_pdf_path, (str, os.PathLike)):
+            raise ValueError(f"PDF generation failed: {type(base_pdf_path)}")
 
-        # Return PDF response (FastAPI uni o‘zi o‘qiydi)
-        return FileResponse(
-            path=generated_pdf_path,
-            filename=f"contract_{contract_number}.pdf",
-            media_type="application/pdf"
-        )
+        # Add attachments (images) at the end of PDF - each image on separate page
+        final_pdf = tempfile.NamedTemporaryFile(delete=False, suffix=".pdf")
+        final_pdf_path = final_pdf.name
+        final_pdf.close()
 
-    except Exception as e:
-        # Faylni xavfsiz o‘chirish
+        # Collect all image URLs for attachments
+        attachment_urls = []
+        if passport_copy_url:
+            attachment_urls.append(passport_copy_url)
+        if form_086_url:
+            attachment_urls.append(form_086_url)
+        if heart_checkup_url:
+            attachment_urls.append(heart_checkup_url)
+        if birth_certificate_url:
+            attachment_urls.append(birth_certificate_url)
+
+        # Add contract images if any
+        if contract_images_urls:
+            attachment_urls.extend(contract_images_urls)
+
+        # Merge base PDF with image attachments (each image = 1 page)
+        generator.add_attachments_to_pdf(base_pdf_path, attachment_urls, final_pdf_path)
+
+        # Upload final PDF to S3
+        pdf_s3_url = upload_pdf_to_s3(final_pdf_path, contract_number)
+
+        # Update contract with PDF URL
+        contract.final_pdf_url = pdf_s3_url
+        await db.commit()
+
+        # Clean up temp files
         try:
-            time.sleep(0.2)  # Windows lock'ni ozgina kutish
+            time.sleep(0.2)
             if os.path.exists(pdf_path):
                 os.unlink(pdf_path)
-        except PermissionError:
-            print(f"⚠️ Fayl o‘chirilmadi (lock): {pdf_path}")
+            if os.path.exists(final_pdf_path):
+                os.unlink(final_pdf_path)
+        except:
+            pass
+
+        # Return success response with contract and PDF URL
+        return DataResponse(data={
+            "message": "Student and contract created successfully",
+            "student_id": student.id,
+            "contract_id": contract.id,
+            "contract_number": contract_number,
+            "pdf_url": pdf_s3_url
+        })
+
+    except Exception as e:
+        # Clean up temp files on error
+        try:
+            time.sleep(0.2)
+            if os.path.exists(pdf_path):
+                os.unlink(pdf_path)
+            if 'final_pdf_path' in locals() and os.path.exists(final_pdf_path):
+                os.unlink(final_pdf_path)
+        except:
+            pass
 
         raise HTTPException(status_code=500, detail=f"Error generating PDF: {str(e)}")
 

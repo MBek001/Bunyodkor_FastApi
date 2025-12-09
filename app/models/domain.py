@@ -61,6 +61,9 @@ class Group(Base, TimestampMixin):
         SAEnum(GroupStatus, native_enum=False, length=20), default=GroupStatus.ACTIVE, nullable=False, index=True
     )
 
+    # Birth year - which year students this group is for (e.g., 2015, 2017, 2020)
+    birth_year: Mapped[int] = mapped_column(Integer, nullable=False, index=True)
+
     # Archive year - used for yearly data separation (2025, 2026, etc.)
     archive_year: Mapped[int] = mapped_column(Integer, nullable=False, index=True, server_default="2025")
 

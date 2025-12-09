@@ -568,3 +568,49 @@ async def get_next_available_number(
         birth_year=birth_year,
         is_full=False
     ))
+
+
+@router.get("/{year}/{contract_id}/pdf", dependencies=[Depends(require_permission(PERM_CONTRACTS_VIEW))])
+async def get_contract_pdf(
+    year: int,
+    contract_id: int,
+    db: Annotated[AsyncSession, Depends(get_db)],
+):
+    """
+    Get contract PDF by year and contract ID.
+
+    The PDF is retrieved from S3 storage (final_pdf_url field).
+
+    Args:
+        year: Archive year (e.g., 2025, 2026)
+        contract_id: Contract ID
+
+    Returns:
+        Redirect to S3 PDF URL or 404 if not found
+    """
+    # Find contract
+    result = await db.execute(
+        select(Contract).where(
+            and_(
+                Contract.id == contract_id,
+                Contract.archive_year == year
+            )
+        )
+    )
+    contract = result.scalar_one_or_none()
+
+    if not contract:
+        raise HTTPException(
+            status_code=404,
+            detail=f"Contract with ID {contract_id} for year {year} not found"
+        )
+
+    if not contract.final_pdf_url:
+        raise HTTPException(
+            status_code=404,
+            detail="PDF not generated for this contract yet"
+        )
+
+    # Redirect to S3 URL
+    from fastapi.responses import RedirectResponse
+    return RedirectResponse(url=contract.final_pdf_url, status_code=302)
