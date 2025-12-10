@@ -20,7 +20,7 @@ router = APIRouter(prefix="/archive", tags=["Archive"])
 @router.post("/year/{year}", response_model=DataResponse[dict])
 async def archive_year_data(
     year: int,
-    user: Annotated[CurrentUser, Depends()],
+    user: CurrentUser,
     db: Annotated[AsyncSession, Depends(get_db)],
 ):
     """
@@ -130,7 +130,7 @@ async def archive_year_data(
 @router.post("/unarchive/year/{year}", response_model=DataResponse[dict])
 async def unarchive_year_data(
     year: int,
-    user: Annotated[CurrentUser, Depends()],
+    user: CurrentUser,
     db: Annotated[AsyncSession, Depends(get_db)],
 ):
     """
@@ -219,7 +219,7 @@ async def unarchive_year_data(
 @router.get("/stats/{year}", response_model=DataResponse[dict])
 async def get_archive_stats(
     year: int,
-    user: Annotated[CurrentUser, Depends()],
+    user: CurrentUser,
     db: Annotated[AsyncSession, Depends(get_db)],
 ):
     """
