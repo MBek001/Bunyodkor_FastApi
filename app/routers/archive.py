@@ -10,8 +10,9 @@ from sqlalchemy.orm import selectinload
 from datetime import datetime
 
 from app.core.db import get_db
-from app.deps import CurrentUser
+from app.deps import CurrentUser, get_current_user
 from app.models.domain import Group, Student, Contract
+from app.models.auth import User
 from app.models.enums import GroupStatus, StudentStatus, ContractStatus
 from app.schemas.common import DataResponse
 from app.schemas.contract import ContractRead
@@ -22,8 +23,8 @@ router = APIRouter(prefix="/archive", tags=["Archive"])
 @router.post("/year/{year}", response_model=DataResponse[dict])
 async def archive_year_data(
     year: int,
-    user: CurrentUser,
     db: Annotated[AsyncSession, Depends(get_db)],
+    user: Annotated[User, Depends(get_current_user)],
 ):
     """
     Archive all data for a specific year (Groups, Students, Contracts).
@@ -132,8 +133,8 @@ async def archive_year_data(
 @router.post("/unarchive/year/{year}", response_model=DataResponse[dict])
 async def unarchive_year_data(
     year: int,
-    user: CurrentUser,
     db: Annotated[AsyncSession, Depends(get_db)],
+    user: Annotated[User, Depends(get_current_user)],
 ):
     """
     Unarchive all data for a specific year (UNDO archive operation).
@@ -221,8 +222,8 @@ async def unarchive_year_data(
 @router.get("/stats/{year}", response_model=DataResponse[dict])
 async def get_archive_stats(
     year: int,
-    user: CurrentUser,
     db: Annotated[AsyncSession, Depends(get_db)],
+    user: Annotated[User, Depends(get_current_user)],
 ):
     """
     Get statistics about archivable/archived data for a year.
@@ -318,8 +319,8 @@ async def get_archive_stats(
 @router.get("/terminated-contracts/{year}", response_model=DataResponse[list[ContractRead]])
 async def get_terminated_contracts(
     year: int,
-    user: CurrentUser,
     db: Annotated[AsyncSession, Depends(get_db)],
+    user: Annotated[User, Depends(get_current_user)],
 ):
     """
     Get all terminated contracts for a specific year.
