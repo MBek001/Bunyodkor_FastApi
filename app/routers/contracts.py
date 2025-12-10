@@ -50,8 +50,9 @@ async def get_contracts(
 
     Default behavior:
     - Shows current year's contracts only
-    - Excludes ARCHIVED contracts unless include_archived=true
-    - Can filter by status, student_id, contract_number
+    - Shows only ACTIVE and EXPIRED contracts (excludes ARCHIVED and TERMINATED)
+    - Set include_archived=true to also show ARCHIVED contracts
+    - TERMINATED contracts are only visible via /archive/terminated-contracts endpoint
     """
     # Default to current year if not specified
     if archive_year is None:
@@ -59,12 +60,20 @@ async def get_contracts(
 
     query = select(Contract).where(Contract.archive_year == archive_year)
 
-    # Default: exclude ARCHIVED contracts
-    if not include_archived:
-        query = query.where(Contract.status != ContractStatus.ARCHIVED)
-
+    # Apply status filtering based on parameters
     if status:
+        # If specific status requested, use it
         query = query.where(Contract.status == status)
+    elif not include_archived:
+        # Default: show only ACTIVE and EXPIRED (exclude ARCHIVED and TERMINATED)
+        query = query.where(Contract.status.in_([ContractStatus.ACTIVE, ContractStatus.EXPIRED]))
+    else:
+        # include_archived=true: show ACTIVE, EXPIRED, and ARCHIVED (but not TERMINATED)
+        query = query.where(Contract.status.in_([
+            ContractStatus.ACTIVE,
+            ContractStatus.EXPIRED,
+            ContractStatus.ARCHIVED
+        ]))
     if student_id:
         query = query.where(Contract.student_id == student_id)
     if contract_number:
@@ -76,12 +85,17 @@ async def get_contracts(
 
     count_query = select(func.count(Contract.id)).where(Contract.archive_year == archive_year)
 
-    # Default: exclude ARCHIVED contracts in count
-    if not include_archived:
-        count_query = count_query.where(Contract.status != ContractStatus.ARCHIVED)
-
+    # Apply same status filtering to count
     if status:
         count_query = count_query.where(Contract.status == status)
+    elif not include_archived:
+        count_query = count_query.where(Contract.status.in_([ContractStatus.ACTIVE, ContractStatus.EXPIRED]))
+    else:
+        count_query = count_query.where(Contract.status.in_([
+            ContractStatus.ACTIVE,
+            ContractStatus.EXPIRED,
+            ContractStatus.ARCHIVED
+        ]))
     if student_id:
         count_query = count_query.where(Contract.student_id == student_id)
     if contract_number:
