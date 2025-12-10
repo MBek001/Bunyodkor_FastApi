@@ -40,7 +40,7 @@ async def upload_image_to_s3(file: UploadFile, folder: str = "contracts") -> str
             Key=key,
             ExtraArgs={
                 "ContentType": file.content_type,
-                "ACL": "public-read"  # Make images publicly accessible
+
             }
         )
 
@@ -79,7 +79,7 @@ def upload_pdf_to_s3(pdf_file_path: str, contract_number: str, folder: str = "co
             Key=key,
             ExtraArgs={
                 "ContentType": "application/pdf",
-                "ACL": "public-read"  # Make PDF publicly accessible
+
             }
         )
 

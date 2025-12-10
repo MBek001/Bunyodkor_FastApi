@@ -556,30 +556,27 @@ async def get_next_available_number(
         is_full=False
     ))
 
+import io
+import httpx
+from fastapi.responses import StreamingResponse
+from fastapi.responses import JSONResponse
 
 @router.get("/{year}/{contract_number}/pdf", dependencies=[Depends(require_permission(PERM_CONTRACTS_VIEW))])
-async def get_contract_pdf(
+async def get_contract_pdf_url(
     year: int,
     contract_number: str,
     db: Annotated[AsyncSession, Depends(get_db)],
 ):
     """
-    Get contract PDF by year and contract NUMBER.
-
-    The PDF is retrieved from S3 storage (final_pdf_url field).
-
-    Args:
-        year: Archive year (e.g., 2025, 2026)
-        contract_number: Contract number (e.g., "N12017", "N52015")
-
-    Returns:
-        Redirect to S3 PDF URL or 404 if not found
+    Get contract PDF URL by year and contract number.
+    Instead of returning the actual PDF stream, this endpoint returns the S3 URL.
 
     Example:
         GET /contracts/2025/N12017/pdf
-        → Returns PDF for contract N12017 from year 2025
+        → Returns: {"pdf_url": "https://bucket.s3.region.amazonaws.com/contract-pdfs/N12017_xxx.pdf"}
     """
-    # Find contract by NUMBER and year
+
+    # Find contract in DB
     result = await db.execute(
         select(Contract).where(
             and_(
@@ -602,6 +599,5 @@ async def get_contract_pdf(
             detail=f"PDF not generated for contract {contract_number} yet"
         )
 
-    # Redirect to S3 URL
-    from fastapi.responses import RedirectResponse
-    return RedirectResponse(url=contract.final_pdf_url, status_code=302)
+    # Return JSON with the S3 URL
+    return JSONResponse(content={"pdf_url": contract.final_pdf_url})

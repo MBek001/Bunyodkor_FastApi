@@ -4,9 +4,10 @@ from reportlab.lib.units import mm
 from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
 from reportlab.pdfbase import pdfmetrics
 from reportlab.pdfbase.ttfonts import TTFont
-from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle, KeepTogether, Image, PageBreak
+from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle, KeepTogether,PageBreak
 from reportlab.lib import colors
 from reportlab.lib.enums import TA_CENTER, TA_LEFT, TA_RIGHT, TA_JUSTIFY
+from reportlab.platypus import Image as RLImage
 import json
 import os
 import sys
@@ -15,8 +16,8 @@ from PyPDF2 import PdfMerger
 from reportlab.pdfgen import canvas
 from reportlab.lib.pagesizes import A4
 import tempfile
-
-
+from PIL import Image
+from io import BytesIO
 
 # Try to find DejaVu fonts in common Linux locations
 # font_locations = [
@@ -343,15 +344,36 @@ class ContractPDFGenerator:
         img_path = student.get("student_image")
 
         # Rasm bloki
-        if img_path and os.path.exists(img_path):
-            left_block = Image(img_path, width=30 * mm, height=40 * mm)
+        if img_path:
+            try:
+                if img_path.startswith("http"):
+                    import httpx
+                    from io import BytesIO
+                    response = httpx.get(img_path, timeout=10.0)
+                    response.raise_for_status()
+                    img_bytes = BytesIO(response.content)
+                    left_block = RLImage(img_bytes, width=30 * mm, height=40 * mm)
+                elif os.path.exists(img_path):
+                    left_block = RLImage(img_path, width=30 * mm, height=40 * mm)
+                else:
+                    left_block = Paragraph("[Rasm topilmadi]", ParagraphStyle(
+                        name='PlaceholderStyle',
+                        fontSize=8,
+                        alignment=TA_CENTER
+                    ))
+            except Exception as e:
+                print(f"⚠️ Rasm yuklashda xato: {e}")
+                left_block = Paragraph("[Rasm yuklab bo‘lmadi]", ParagraphStyle(
+                    name='PlaceholderStyle',
+                    fontSize=8,
+                    alignment=TA_CENTER
+                ))
         else:
-            left_block = Paragraph("[Rasm]", ParagraphStyle(
+            left_block = Paragraph("[Rasm yo‘q]", ParagraphStyle(
                 name='PlaceholderStyle',
                 fontSize=8,
                 alignment=TA_CENTER
             ))
-
         # Direktor ma'lumoti
         right_style = ParagraphStyle(
             name='DirectorInfo',
@@ -535,7 +557,7 @@ class ContractPDFGenerator:
         """Logotipni (rasmni) hujjat tepasiga qo'shish"""
         if os.path.exists(self.logo_filename):
             # Logotip o'lchamini sozlash
-            logo = Image(self.logo_filename, width=15 * mm, height=15 * mm)
+            logo = RLImage(self.logo_filename, width=15 * mm, height=15 * mm)
 
             logo.hAlign = 'CENTER'
 
@@ -929,71 +951,73 @@ class ContractPDFGenerator:
 
         return self.story
 
-
     def add_attachments_to_pdf(self, base_pdf, image_urls, output_pdf):
         """
         Asosiy PDF ga barcha rasm fayllarini (S3'dan yuklab olingan yoki lokal yo'ldagi) qo'shadi.
         """
+        import os
         import httpx
+        import tempfile
         from io import BytesIO
+        from PyPDF2 import PdfMerger
+        from reportlab.lib.pagesizes import A4
+        from reportlab.pdfgen import canvas
+        from reportlab.lib.units import mm
+        from PIL import Image as PILImage  # 🟢 To‘g‘ri import
+        # !!! Eslatma: bu yerda reportlab.platypus.Image ishlatilmaydi
 
         merger = PdfMerger()
         merger.append(base_pdf)
 
+        temp_files_to_delete = []
+
         for url in image_urls:
             try:
-                # S3 URL yoki lokal fayl yo'lini aniqlash
-                if url.startswith('http://') or url.startswith('https://'):
-                    # S3 URL dan yuklab olish
+                if url.startswith(('http://', 'https://')):
                     with httpx.Client() as client:
                         response = client.get(url, timeout=10.0)
                         response.raise_for_status()
                         img_data = BytesIO(response.content)
-                    img = Image.open(img_data)
+                    img = PILImage.open(img_data).convert("RGB")
 
-                    # Vaqtinchalik fayl yaratish (ReportLab uchun)
-                    with tempfile.NamedTemporaryFile(suffix=f".{img.format.lower()}", delete=False) as temp_img_file:
-                        img.save(temp_img_file.name)
+                    with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as temp_img_file:
+                        img.save(temp_img_file.name, format="PNG")
                         temp_img_path = temp_img_file.name
+                        temp_files_to_delete.append(temp_img_path)
                 else:
-                    # Lokal fayl
-                    img = Image.open(url)
+                    img = PILImage.open(url).convert("RGB")
                     temp_img_path = url
 
-                # Rasmni PDF sahifaga joylash
                 with tempfile.NamedTemporaryFile(suffix=".pdf", delete=False) as temp_img_pdf:
                     c = canvas.Canvas(temp_img_pdf.name, pagesize=A4)
-
-                    # O'lchamni A4 formatga joylashtiramiz (nisbatni saqlab)
                     w, h = img.size
                     aspect = h / w
-                    width = A4[0] - 30 * mm
-                    height = width * aspect
-
-                    # Agar rasm juda baland bo'lsa, balandlikni cheklash
+                    max_width = A4[0] - 30 * mm
                     max_height = A4[1] - 30 * mm
+                    width = max_width
+                    height = width * aspect
                     if height > max_height:
                         height = max_height
                         width = height / aspect
-
-                    c.drawImage(temp_img_path, 15 * mm, A4[1] - height - 15 * mm, width=width, height=height)
+                    x = (A4[0] - width) / 2
+                    y = (A4[1] - height) / 2
+                    c.drawImage(temp_img_path, x, y, width=width, height=height)
                     c.showPage()
                     c.save()
                     merger.append(temp_img_pdf.name)
-
-                # Vaqtinchalik faylni tozalash (S3 URL uchun)
-                if url.startswith('http://') or url.startswith('https://'):
-                    try:
-                        os.unlink(temp_img_path)
-                    except:
-                        pass
+                    temp_files_to_delete.append(temp_img_pdf.name)
 
             except Exception as e:
                 print(f"!!! Attachmentni PDF ga qo'shishda xato: {url} -> {e}")
-                continue
 
         merger.write(output_pdf)
         merger.close()
+
+        for f in temp_files_to_delete:
+            try:
+                os.unlink(f)
+            except Exception:
+                pass
 
     def generate(self, output_file):
 

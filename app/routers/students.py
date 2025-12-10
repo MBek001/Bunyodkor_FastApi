@@ -570,7 +570,7 @@ async def create_student(
 from dateutil.relativedelta import relativedelta
 from decimal import Decimal, InvalidOperation
 from fastapi import HTTPException
-
+import asyncio
 
 @router.post("/create-with-contract")
 async def create_student_with_contract(
@@ -699,9 +699,9 @@ async def create_student_with_contract(
         )
     contract_images_urls = []
     if contract_image_1:
-        contract_images_urls.append(upload_image_to_s3(contract_image_1, "contracts"))
+        contract_images_urls.append(await upload_image_to_s3(contract_image_1, "contracts"))
     if contract_image_2:
-        contract_images_urls.append(upload_image_to_s3(contract_image_2, "contracts"))
+        contract_images_urls.append(await upload_image_to_s3(contract_image_2, "contracts"))
 
     # Extract contract fields
     buyurtmachi = contract_info.get("buyurtmachi", {})
@@ -917,6 +917,9 @@ async def create_student_with_contract(
             "oylik_narx_sozlar": "sum"  # You can add number-to-words conversion here
         }
     }
+    # Agar contract_image_1 mavjud bo‘lsa — birinchi sahifadagi student_image sifatida ishlatamiz
+    if contract_images_urls and len(contract_images_urls) > 0:
+        pdf_data["student"]["student_image"] = contract_images_urls[0]
 
     # Generate PDF with attachments (images at the end)
     import time
@@ -953,7 +956,9 @@ async def create_student_with_contract(
 
         # Add contract images if any
         if contract_images_urls:
-            attachment_urls.extend(contract_images_urls)
+            if len(contract_images_urls) > 1:
+                # faqat 2-chi, 3-chi va hokazo rasmlarni qo'shamiz
+                attachment_urls.extend(contract_images_urls[1:])
 
         # Merge base PDF with image attachments (each image = 1 page)
         generator.add_attachments_to_pdf(base_pdf_path, attachment_urls, final_pdf_path)
