@@ -37,16 +37,43 @@ router = APIRouter(prefix="/contracts", tags=["Contracts"])
 @router.get("", response_model=DataResponse[list[ContractRead]], dependencies=[Depends(require_permission(PERM_CONTRACTS_VIEW))])
 async def get_contracts(
     db: Annotated[AsyncSession, Depends(get_db)],
+    archive_year: int | None = Query(None, description="Filter by archive year (defaults to current year)"),
+    include_archived: bool = Query(False, description="Include archived contracts (default: excludes ARCHIVED)"),
     status: Optional[str] = None,
     student_id: Optional[int] = None,
     contract_number: Optional[str] = None,
     page: int = Query(1, ge=1),
     page_size: int = Query(20, ge=1, le=100),
 ):
-    query = select(Contract)
+    """
+    Get all contracts with optional filters.
 
+    Default behavior:
+    - Shows current year's contracts only
+    - Shows only ACTIVE and EXPIRED contracts (excludes ARCHIVED and TERMINATED)
+    - Set include_archived=true to also show ARCHIVED contracts
+    - TERMINATED contracts are only visible via /archive/terminated-contracts endpoint
+    """
+    # Default to current year if not specified
+    if archive_year is None:
+        archive_year = datetime.now().year
+
+    query = select(Contract).where(Contract.archive_year == archive_year)
+
+    # Apply status filtering based on parameters
     if status:
+        # If specific status requested, use it
         query = query.where(Contract.status == status)
+    elif not include_archived:
+        # Default: show only ACTIVE and EXPIRED (exclude ARCHIVED and TERMINATED)
+        query = query.where(Contract.status.in_([ContractStatus.ACTIVE, ContractStatus.EXPIRED]))
+    else:
+        # include_archived=true: show ACTIVE, EXPIRED, and ARCHIVED (but not TERMINATED)
+        query = query.where(Contract.status.in_([
+            ContractStatus.ACTIVE,
+            ContractStatus.EXPIRED,
+            ContractStatus.ARCHIVED
+        ]))
     if student_id:
         query = query.where(Contract.student_id == student_id)
     if contract_number:
@@ -56,9 +83,19 @@ async def get_contracts(
     result = await db.execute(query.offset(offset).limit(page_size))
     contracts = result.scalars().all()
 
-    count_query = select(func.count(Contract.id))
+    count_query = select(func.count(Contract.id)).where(Contract.archive_year == archive_year)
+
+    # Apply same status filtering to count
     if status:
         count_query = count_query.where(Contract.status == status)
+    elif not include_archived:
+        count_query = count_query.where(Contract.status.in_([ContractStatus.ACTIVE, ContractStatus.EXPIRED]))
+    else:
+        count_query = count_query.where(Contract.status.in_([
+            ContractStatus.ACTIVE,
+            ContractStatus.EXPIRED,
+            ContractStatus.ARCHIVED
+        ]))
     if student_id:
         count_query = count_query.where(Contract.student_id == student_id)
     if contract_number:
