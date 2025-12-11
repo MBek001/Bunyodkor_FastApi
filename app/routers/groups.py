@@ -52,8 +52,33 @@ async def get_groups(
     count_result = await db.execute(count_query)
     total = count_result.scalar()
 
+    # Enrich groups with student counts and waiting list counts
+    from app.models.enums import StudentStatus
+    groups_data = []
+    for group in groups:
+        group_dict = GroupRead.model_validate(group).model_dump()
+
+        # Count active students in this group
+        student_count_result = await db.execute(
+            select(func.count(Student.id)).where(
+                and_(
+                    Student.group_id == group.id,
+                    Student.status == StudentStatus.ACTIVE
+                )
+            )
+        )
+        group_dict['active_students_count'] = student_count_result.scalar() or 0
+
+        # Count waiting list entries
+        waiting_count_result = await db.execute(
+            select(func.count(WaitingList.id)).where(WaitingList.group_id == group.id)
+        )
+        group_dict['waiting_list_count'] = waiting_count_result.scalar() or 0
+
+        groups_data.append(group_dict)
+
     return DataResponse(
-        data=[GroupRead.model_validate(g) for g in groups],
+        data=groups_data,
         meta=PaginationMeta(
             page=page,
             page_size=page_size,
@@ -68,7 +93,11 @@ async def create_group(
     data: GroupCreate,
     db: Annotated[AsyncSession, Depends(get_db)],
 ):
-    """Create a new group with current year as archive year"""
+    """
+    Create a new group with current year as archive year.
+
+    Birth year must be unique per archive year (excluding archived groups).
+    """
     if data.coach_id:
         from app.models.auth import User
         coach_result = await db.execute(select(User).where(User.id == data.coach_id))
@@ -76,8 +105,27 @@ async def create_group(
             raise HTTPException(status_code=404, detail=f"Coach with ID {data.coach_id} not found")
 
     from datetime import datetime
+    current_year = datetime.now().year
+
+    # Check if birth_year already exists for current archive year (excluding archived groups)
+    existing_group = await db.execute(
+        select(Group).where(
+            and_(
+                Group.archive_year == current_year,
+                Group.birth_year == data.birth_year,
+                Group.status != GroupStatus.ARCHIVED
+            )
+        )
+    )
+    if existing_group.scalar_one_or_none():
+        raise HTTPException(
+            status_code=400,
+            detail=f"A group for birth year {data.birth_year} already exists in {current_year}. "
+                   f"Only one active group per birth year is allowed per archive year."
+        )
+
     group_data = data.model_dump()
-    group_data['archive_year'] = datetime.now().year  # Set current year
+    group_data['archive_year'] = current_year  # Set current year
     group = Group(**group_data)
     db.add(group)
     await db.commit()
@@ -105,6 +153,11 @@ async def update_group(
     data: GroupUpdate,
     db: Annotated[AsyncSession, Depends(get_db)],
 ):
+    """
+    Update group details.
+
+    Birth year must remain unique per archive year (excluding archived groups).
+    """
     result = await db.execute(select(Group).where(Group.id == group_id))
     group = result.scalar_one_or_none()
 
@@ -112,6 +165,25 @@ async def update_group(
         raise HTTPException(status_code=404, detail="Group not found")
 
     update_data = data.model_dump(exclude_unset=True)
+
+    # Check birth_year uniqueness if being updated
+    if "birth_year" in update_data:
+        existing_group = await db.execute(
+            select(Group).where(
+                and_(
+                    Group.id != group_id,  # Exclude current group
+                    Group.archive_year == group.archive_year,
+                    Group.birth_year == update_data["birth_year"],
+                    Group.status != GroupStatus.ARCHIVED
+                )
+            )
+        )
+        if existing_group.scalar_one_or_none():
+            raise HTTPException(
+                status_code=400,
+                detail=f"A group for birth year {update_data['birth_year']} already exists in {group.archive_year}. "
+                       f"Only one active group per birth year is allowed per archive year."
+            )
 
     if "coach_id" in update_data and update_data["coach_id"] is not None:
         from app.models.auth import User

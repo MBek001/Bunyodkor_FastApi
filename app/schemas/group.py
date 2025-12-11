@@ -14,6 +14,10 @@ class GroupRead(BaseModel):
     coach_id: Optional[int] = None
     created_at: datetime
 
+    # Optional stats - populated when requested
+    active_students_count: Optional[int] = Field(default=None, description="Number of active students in this group")
+    waiting_list_count: Optional[int] = Field(default=None, description="Number of students waiting to join this group")
+
     class Config:
         from_attributes = True
 
