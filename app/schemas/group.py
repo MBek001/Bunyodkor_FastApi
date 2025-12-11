@@ -6,6 +6,7 @@ from pydantic import BaseModel, Field
 class GroupRead(BaseModel):
     id: int
     name: str
+    birth_year: int
     description: Optional[str] = None
     schedule_days: Optional[str] = None
     schedule_time: Optional[str] = None
@@ -19,6 +20,7 @@ class GroupRead(BaseModel):
 
 class GroupCreate(BaseModel):
     name: str
+    birth_year: int = Field(description="Birth year of students in this group (e.g., 2010, 2015, 2020)")
     description: Optional[str] = None
     schedule_days: Optional[str] = None
     schedule_time: Optional[str] = None
@@ -28,6 +30,7 @@ class GroupCreate(BaseModel):
 
 class GroupUpdate(BaseModel):
     name: Optional[str] = None
+    birth_year: Optional[int] = None
     description: Optional[str] = None
     schedule_days: Optional[str] = None
     schedule_time: Optional[str] = None
