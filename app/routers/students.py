@@ -898,8 +898,7 @@ async def create_student_with_contract(
         heart_checkup_url=heart_checkup_url,
         birth_certificate_url=birth_certificate_url,
         contract_images_urls=contract_images_json_str,
-        custom_fields=custom_fields_json_str,
-        signature_token=None  # No signature needed
+        custom_fields=custom_fields_json_str
     )
 
     db.add(contract)
