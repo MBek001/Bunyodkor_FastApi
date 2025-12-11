@@ -447,8 +447,7 @@ async def create_contract_with_file_upload(
         heart_checkup_url=heart_url,
         birth_certificate_url=birth_cert_url,
         contract_images_urls=json.dumps(contract_image_urls),
-        custom_fields=json.dumps(custom_fields.model_dump(), ensure_ascii=False, default=str),
-        signature_token=str(uuid.uuid4())
+        custom_fields=json.dumps(custom_fields.model_dump(), ensure_ascii=False, default=str)
     )
 
     db.add(contract)

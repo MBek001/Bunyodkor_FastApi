@@ -100,11 +100,6 @@ class Contract(Base, TimestampMixin):
     heart_checkup_url: Mapped[str | None] = mapped_column(Text, nullable=True)
     birth_certificate_url: Mapped[str | None] = mapped_column(Text, nullable=True)  # Passport or birth certificate
     contract_images_urls: Mapped[str | None] = mapped_column(Text, nullable=True)  # JSON array of 5 contract page URLs
-
-    # Digital signature
-    signature_url: Mapped[str | None] = mapped_column(Text, nullable=True)
-    signature_token: Mapped[str | None] = mapped_column(String(255), unique=True, index=True, nullable=True)  # For signing link
-    signed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     final_pdf_url: Mapped[str | None] = mapped_column(Text, nullable=True)  # Merged PDF with all documents
 
     # Editable fields (from handwritten parts)

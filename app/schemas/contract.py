@@ -108,11 +108,6 @@ class ContractRead(BaseModel):
     heart_checkup_url: Optional[str] = None
     birth_certificate_url: Optional[str] = None
     contract_images_urls: Optional[str] = None  # JSON string
-
-    # Digital signature
-    signature_url: Optional[str] = None
-    signature_token: Optional[str] = None
-    signed_at: Optional[datetime] = None
     final_pdf_url: Optional[str] = None
 
     # Custom fields
