@@ -558,8 +558,26 @@ async def create_student(
     if data.group_id:
         from app.models.domain import Group
         group_result = await db.execute(select(Group).where(Group.id == data.group_id))
-        if not group_result.scalar_one_or_none():
+        group = group_result.scalar_one_or_none()
+        if not group:
             raise HTTPException(status_code=404, detail=f"Group with ID {data.group_id} not found")
+
+        # Check group capacity - only count ACTIVE students
+        if data.status == StudentStatus.ACTIVE:
+            active_students_count = await db.execute(
+                select(func.count(Student.id)).where(
+                    Student.group_id == data.group_id,
+                    Student.status == StudentStatus.ACTIVE
+                )
+            )
+            current_count = active_students_count.scalar() or 0
+
+            if current_count >= group.capacity:
+                raise HTTPException(
+                    status_code=409,
+                    detail=f"Group '{group.name}' is at full capacity ({group.capacity} students). "
+                           f"Cannot add more active students. Consider adding to waiting list instead."
+                )
 
     student = Student(**data.model_dump())
     db.add(student)
@@ -1114,7 +1132,43 @@ async def update_student(
         if existing_face_id.scalar_one_or_none():
             raise HTTPException(status_code=400, detail="Face ID already exists. Please use a unique Face ID")
 
-    if "group_id" in update_data and update_data["group_id"] is not None:
+    # Check capacity when assigning to a group or changing status to ACTIVE
+    target_group_id = update_data.get("group_id", student.group_id)
+    target_status = update_data.get("status", student.status)
+
+    # Determine if this update will make student ACTIVE in a group
+    will_be_active_in_group = (
+        target_group_id is not None and
+        target_status == StudentStatus.ACTIVE and
+        (student.group_id != target_group_id or student.status != StudentStatus.ACTIVE)
+    )
+
+    if will_be_active_in_group:
+        from app.models.domain import Group
+        group_result = await db.execute(select(Group).where(Group.id == target_group_id))
+        group = group_result.scalar_one_or_none()
+
+        if not group:
+            raise HTTPException(status_code=404, detail=f"Group with ID {target_group_id} not found")
+
+        # Count current ACTIVE students in target group (excluding this student)
+        active_students_count = await db.execute(
+            select(func.count(Student.id)).where(
+                Student.group_id == target_group_id,
+                Student.status == StudentStatus.ACTIVE,
+                Student.id != student_id  # Exclude current student from count
+            )
+        )
+        current_count = active_students_count.scalar() or 0
+
+        if current_count >= group.capacity:
+            raise HTTPException(
+                status_code=409,
+                detail=f"Group '{group.name}' is at full capacity ({group.capacity} students). "
+                       f"Cannot add more active students. Consider adding to waiting list instead."
+            )
+    elif "group_id" in update_data and update_data["group_id"] is not None:
+        # Just validate group exists if only changing group
         from app.models.domain import Group
         group_result = await db.execute(select(Group).where(Group.id == update_data["group_id"]))
         if not group_result.scalar_one_or_none():
