@@ -27,10 +27,10 @@ class Student(Base, TimestampMixin):
     group_id: Mapped[int | None] = mapped_column(ForeignKey("groups.id", ondelete="SET NULL"), nullable=True)
 
     group: Mapped["Group"] = relationship("Group", back_populates="students")
-    parents: Mapped[list["Parent"]] = relationship("Parent", back_populates="student")
-    contracts: Mapped[list["Contract"]] = relationship("Contract", back_populates="student")
-    attendances: Mapped[list["Attendance"]] = relationship("Attendance", back_populates="student")
-    gate_logs: Mapped[list["GateLog"]] = relationship("GateLog", back_populates="student")
+    parents: Mapped[list["Parent"]] = relationship("Parent", back_populates="student", cascade="all, delete-orphan")
+    contracts: Mapped[list["Contract"]] = relationship("Contract", back_populates="student", cascade="all, delete-orphan")
+    attendances: Mapped[list["Attendance"]] = relationship("Attendance", back_populates="student", cascade="all, delete-orphan")
+    gate_logs: Mapped[list["GateLog"]] = relationship("GateLog", back_populates="student", cascade="all, delete-orphan")
 
 
 class Parent(Base, TimestampMixin):
