@@ -15,7 +15,7 @@ from app.models.domain import Contract, Student, Group, WaitingList
 from app.schemas.contract import (
     ContractRead, ContractUpdate, ContractTerminate,
     ContractCreateWithDocuments, ContractCreatedResponse,
-    ContractNumberInfo, NextAvailableNumber, ContractCustomFields
+    ContractNumberInfo, ContractCustomFields
 )
 from app.schemas.common import DataResponse, PaginationMeta
 from app.deps import require_permission, CurrentUser
@@ -24,7 +24,6 @@ from app.models.enums import ContractStatus
 from app.services.contract_allocation import (
     allocate_contract_number,
     get_available_contract_numbers,
-    get_next_available_sequence,
     is_group_full,
     ContractNumberAllocationError
 )
@@ -554,42 +553,6 @@ async def get_available_numbers(
         is_full=is_full
     ))
 
-
-@router.get("/next-available/{group_id}/{birth_year}", response_model=DataResponse[NextAvailableNumber], dependencies=[Depends(require_permission(PERM_CONTRACTS_VIEW))])
-async def get_next_available_number(
-    group_id: int,
-    birth_year: int,
-    db: Annotated[AsyncSession, Depends(get_db)],
-):
-    """
-    Get the next available contract number for a group and birth year.
-
-    Useful for suggesting a contract number during contract creation.
-
-    Returns:
-    - The next available sequence number
-    - The formatted contract number (e.g., "N12020")
-    - Whether the group is full
-    """
-    # Get next available
-    next_seq = await get_next_available_sequence(db, group_id, birth_year)
-
-    if next_seq is None:
-        return DataResponse(data=NextAvailableNumber(
-            next_available=None,
-            contract_number=None,
-            birth_year=birth_year,
-            is_full=True
-        ))
-
-    contract_number = f"N{next_seq}{birth_year}"
-
-    return DataResponse(data=NextAvailableNumber(
-        next_available=next_seq,
-        contract_number=contract_number,
-        birth_year=birth_year,
-        is_full=False
-    ))
 
 import io
 import httpx

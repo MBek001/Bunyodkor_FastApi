@@ -611,6 +611,12 @@ async def create_student_with_contract(
     """
     Create student with contract and all documents in ONE operation.
 
+    **Contract number is AUTOMATICALLY GENERATED sequentially (N1, N2, N3, etc.)**
+    - No need to provide contract_number
+    - System uses next available number for the group
+    - Numbers cannot be skipped (must be sequential)
+    - Once used, numbers cannot be reused (even if terminated)
+
     **student_data JSON structure:**
     ```json
     {
@@ -624,10 +630,9 @@ async def create_student_with_contract(
     }
     ```
 
-    **contract_data JSON structure:**
+    **contract_data JSON structure (contract_number removed - auto-generated):**
     ```json
      {
-          "contract_number": "N52012",
           "student": {
             "student_image": "student_photo.png",
             "student_fio": "Юсупов Абдулборий Баҳодирович",
@@ -682,10 +687,9 @@ async def create_student_with_contract(
     from app.models.domain import Group, Contract, WaitingList
     from app.models.enums import ContractStatus, StudentStatus
     from app.services.contract_allocation import (
-        get_available_contract_numbers,
+        allocate_contract_number,
         is_group_full,
-        ContractNumberAllocationError,
-        validate_contract_number
+        ContractNumberAllocationError
     )
     import json
     import os
@@ -703,7 +707,6 @@ async def create_student_with_contract(
     first_name = student_info.get("first_name")
     last_name = student_info.get("last_name")
     date_of_birth = student_info.get("date_of_birth")
-    contract_number=student_info.get("contract_number")
     phone = student_info.get("phone")
     address = student_info.get("address")
     status = student_info.get("status", "active")
@@ -728,31 +731,23 @@ async def create_student_with_contract(
     shartnoma_muddati = contract_info.get("shartnoma_muddati", {})
     tolov = contract_info.get("tolov", {})
 
-    # Get birth year and convert to integer
-    birth_year = tarbiyalanuvchi.get("tugilganlik_yil")
-    if not birth_year:
-        raise HTTPException(status_code=400, detail="tugilganlik_yil is required in contract_data.tarbiyalanuvchi")
-
-    # Convert to integer if string
-    try:
-        birth_year = int(birth_year)
-    except (ValueError, TypeError):
-        raise HTTPException(status_code=400, detail=f"tugilganlik_yil must be a valid year (integer): {birth_year}")
-
-    # Validate group exists
+    # Validate group exists and get birth_year from group
     group_result = await db.execute(select(Group).where(Group.id == group_id))
     group = group_result.scalar_one_or_none()
 
     if not group:
         raise HTTPException(status_code=404, detail=f"Group with ID {group_id} not found")
 
-    # Check if group is full for this birth year
+    # Use group's birth_year (not from user input)
+    birth_year = group.birth_year
+
+    # Check if group is full
     group_full = await is_group_full(db, group_id, birth_year)
 
     if group_full:
         raise HTTPException(
             status_code=409,
-            detail=f"Group is full for birth year {birth_year}. Cannot create contract."
+            detail=f"Group '{group.name}' is full (capacity: {group.capacity}). Cannot create contract. Add to waiting list instead."
         )
 
     # Upload all files to S3
@@ -803,25 +798,19 @@ async def create_student_with_contract(
     await db.commit()
     await db.refresh(student)
 
-    # Get contract number from user input (REQUIRED)
-    contract_number = contract_info.get("contract_number")
-    if not contract_number:
-        await db.rollback()
-        raise HTTPException(
-            status_code=400,
-            detail="contract_number is required in contract_data. Use GET /contracts/available-numbers/{group_id}/{birth_year} to see available numbers."
+    # Automatically allocate next available contract number (sequential, no skipping)
+    try:
+        contract_number, birth_year, sequence_number = await allocate_contract_number(
+            db, student.id, group_id
         )
-
-    # Validate contract number
-    is_valid, message, sequence_number = await validate_contract_number(
-        db, contract_number, group_id, birth_year, current_year
-    )
-
-    if not is_valid:
+    except ContractNumberAllocationError as e:
         await db.rollback()
-        raise HTTPException(status_code=400, detail=message)
-
-    # All validations passed - contract number is available!
+        await db.delete(student)
+        await db.commit()
+        raise HTTPException(
+            status_code=409,
+            detail=f"Cannot allocate contract number: {str(e)}. Group may be at full capacity."
+        )
 
     # Parse contract dates
     start_date_str = shartnoma_muddati.get("boshlanish")
