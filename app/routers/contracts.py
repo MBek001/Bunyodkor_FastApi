@@ -18,7 +18,6 @@ from app.schemas.contract import (
     ContractNumberInfo, NextAvailableNumber, ContractCustomFields
 )
 from app.schemas.common import DataResponse, PaginationMeta
-from app.schemas.waiting_list import WaitingListSimple
 from app.deps import require_permission, CurrentUser
 from app.models.auth import User
 from app.models.enums import ContractStatus
