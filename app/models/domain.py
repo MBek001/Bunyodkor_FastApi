@@ -128,18 +128,34 @@ class Contract(Base, TimestampMixin):
 
 class WaitingList(Base, TimestampMixin):
     """
-    Waiting list for students when a group is full.
-    When a contract is canceled, students from the waiting list can be moved to the group.
+    Waiting list for prospective students when a group is full.
+
+    Stores student information directly without linking to students table.
+    When a spot opens in the group, admin can contact parents and register the student.
     """
     __tablename__ = "waiting_list"
 
     id: Mapped[int] = mapped_column(primary_key=True, index=True)
-    student_id: Mapped[int] = mapped_column(ForeignKey("students.id", ondelete="CASCADE"), nullable=False)
+
+    # Student information (stored directly, not linked to students table)
+    student_first_name: Mapped[str] = mapped_column(String(100), nullable=False)
+    student_last_name: Mapped[str] = mapped_column(String(100), nullable=False)
+    birth_year: Mapped[int] = mapped_column(Integer, nullable=False, index=True)
+
+    # Parent information
+    father_name: Mapped[str | None] = mapped_column(String(200), nullable=True)
+    father_phone: Mapped[str | None] = mapped_column(String(20), nullable=True)
+    mother_name: Mapped[str | None] = mapped_column(String(200), nullable=True)
+    mother_phone: Mapped[str | None] = mapped_column(String(20), nullable=True)
+
+    # Group assignment
     group_id: Mapped[int] = mapped_column(ForeignKey("groups.id", ondelete="CASCADE"), nullable=False)
+
+    # Priority and notes
     priority: Mapped[int] = mapped_column(Integer, default=0, nullable=False)  # Higher priority = earlier in queue
     notes: Mapped[str | None] = mapped_column(Text, nullable=True)
     added_by_user_id: Mapped[int | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
 
-    student: Mapped["Student"] = relationship("Student")
+    # Relationships (no student relationship - independent data)
     group: Mapped["Group"] = relationship("Group", back_populates="waiting_list")
     added_by: Mapped["User"] = relationship("User")
