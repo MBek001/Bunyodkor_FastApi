@@ -611,10 +611,10 @@ async def create_student_with_contract(
     """
     Create student with contract and all documents in ONE operation.
 
-    **Contract number is AUTOMATICALLY GENERATED sequentially (N1, N2, N3, etc.)**
-    - No need to provide contract_number
-    - System uses next available number for the group
-    - Numbers cannot be skipped (must be sequential)
+    **Contract number must be provided by admin**
+    - Use GET /contracts/next-available/{group_id} to get the next number
+    - Admin must enter the contract_number manually
+    - Numbers must be sequential (N1, N2, N3, etc.)
     - Once used, numbers cannot be reused (even if terminated)
 
     **student_data JSON structure:**
@@ -630,9 +630,10 @@ async def create_student_with_contract(
     }
     ```
 
-    **contract_data JSON structure (contract_number removed - auto-generated):**
+    **contract_data JSON structure:**
     ```json
      {
+          "contract_number": "N52014",
           "student": {
             "student_image": "student_photo.png",
             "student_fio": "Юсупов Абдулборий Баҳодирович",
@@ -687,9 +688,9 @@ async def create_student_with_contract(
     from app.models.domain import Group, Contract, WaitingList
     from app.models.enums import ContractStatus, StudentStatus
     from app.services.contract_allocation import (
-        allocate_contract_number,
         is_group_full,
-        ContractNumberAllocationError
+        ContractNumberAllocationError,
+        validate_contract_number
     )
     import json
     import os
@@ -730,6 +731,14 @@ async def create_student_with_contract(
     tarbiyalanuvchi = contract_info.get("tarbiyalanuvchi", {})
     shartnoma_muddati = contract_info.get("shartnoma_muddati", {})
     tolov = contract_info.get("tolov", {})
+
+    # Extract contract_number (required, admin must enter it manually)
+    contract_number = contract_info.get("contract_number")
+    if not contract_number:
+        raise HTTPException(
+            status_code=400,
+            detail="contract_number is required in contract_data. Use GET /contracts/next-available/{group_id} to get the next available number."
+        )
 
     # Validate group exists and get birth_year from group
     group_result = await db.execute(select(Group).where(Group.id == group_id))
@@ -798,18 +807,19 @@ async def create_student_with_contract(
     await db.commit()
     await db.refresh(student)
 
-    # Automatically allocate next available contract number (sequential, no skipping)
-    try:
-        contract_number, birth_year, sequence_number = await allocate_contract_number(
-            db, student.id, group_id
-        )
-    except ContractNumberAllocationError as e:
+    # Validate the contract number provided by admin
+    is_valid, message, sequence_number = await validate_contract_number(
+        db, contract_number, group_id, birth_year, current_year
+    )
+
+    if not is_valid:
+        # Rollback student creation if contract number is invalid
         await db.rollback()
         await db.delete(student)
         await db.commit()
         raise HTTPException(
-            status_code=409,
-            detail=f"Cannot allocate contract number: {str(e)}. Group may be at full capacity."
+            status_code=400,
+            detail=f"Invalid contract number: {message}. Use GET /contracts/next-available/{group_id} to get the next available number."
         )
 
     # Parse contract dates

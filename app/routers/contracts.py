@@ -22,7 +22,6 @@ from app.deps import require_permission, CurrentUser
 from app.models.auth import User
 from app.models.enums import ContractStatus
 from app.services.contract_allocation import (
-    allocate_contract_number,
     get_available_contract_numbers,
     is_group_full,
     ContractNumberAllocationError
@@ -512,19 +511,18 @@ async def create_contract_with_file_upload(
         raise HTTPException(status_code=500, detail=f"PDF generation failed: {e}")
 
 
-@router.get("/available-numbers/{group_id}/{birth_year}", response_model=DataResponse[ContractNumberInfo], dependencies=[Depends(require_permission(PERM_CONTRACTS_VIEW))])
-async def get_available_numbers(
+@router.get("/next-available/{group_id}", response_model=DataResponse[dict], dependencies=[Depends(require_permission(PERM_CONTRACTS_VIEW))])
+async def get_next_available_number(
     group_id: int,
-    birth_year: int,
     db: Annotated[AsyncSession, Depends(get_db)],
 ):
     """
-    Get all available contract numbers for a group and birth year.
+    Get the next available contract number for a group.
 
-    Returns:
-    - List of available sequence numbers (e.g., [1, 5, 12, 23])
-    - Total capacity, used slots, and available slots
-    - Whether the group is full for this birth year
+    Birth year is automatically taken from the group's birth_year.
+    Returns the next sequential contract number to use.
+
+    Example: If group has N1, N2, N3 used, returns N4.
     """
     # Get group
     group_result = await db.execute(select(Group).where(Group.id == group_id))
@@ -533,25 +531,39 @@ async def get_available_numbers(
     if not group:
         raise HTTPException(status_code=404, detail=f"Group with ID {group_id} not found")
 
+    # Use group's birth_year
+    birth_year = group.birth_year
+
     # Get available numbers
     try:
         available_numbers = await get_available_contract_numbers(db, group_id, birth_year)
     except ContractNumberAllocationError as e:
         raise HTTPException(status_code=400, detail=str(e))
 
-    total_used = group.capacity - len(available_numbers)
-    is_full = len(available_numbers) == 0
+    if not available_numbers:
+        return DataResponse(data={
+            "next_number": None,
+            "contract_number": None,
+            "message": f"Group '{group.name}' is full (capacity: {group.capacity})",
+            "is_full": True,
+            "group_name": group.name,
+            "birth_year": birth_year
+        })
 
-    return DataResponse(data=ContractNumberInfo(
-        group_id=group_id,
-        group_name=group.name,
-        group_capacity=group.capacity,
-        birth_year=birth_year,
-        available_numbers=available_numbers,
-        total_available=len(available_numbers),
-        total_used=total_used,
-        is_full=is_full
-    ))
+    # Get the first (lowest) available number
+    next_seq = available_numbers[0]
+    contract_number = f"N{next_seq}{birth_year}"
+
+    return DataResponse(data={
+        "next_number": next_seq,
+        "contract_number": contract_number,
+        "message": f"Next available number for group '{group.name}'",
+        "is_full": False,
+        "group_name": group.name,
+        "birth_year": birth_year,
+        "group_capacity": group.capacity,
+        "total_used": group.capacity - len(available_numbers)
+    })
 
 
 import io
