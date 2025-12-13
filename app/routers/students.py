@@ -187,6 +187,8 @@ async def get_unpaid_students(
     year: Optional[int] = None,
     month: Optional[int] = Query(None, ge=1, le=12),
     months: Optional[str] = Query(None, description="Comma-separated months (e.g., '1,2,3' for Jan, Feb, Mar)"),
+    from_date: Optional[date] = Query(None, description="Start date for date range filtering (YYYY-MM-DD)"),
+    to_date: Optional[date] = Query(None, description="End date for date range filtering (YYYY-MM-DD)"),
     group_id: Optional[int] = None,
     page: int = Query(1, ge=1),
     page_size: int = Query(20, ge=1, le=100),
@@ -194,44 +196,76 @@ async def get_unpaid_students(
     """
     Get students who haven't paid for specified periods.
 
-    Filters:
+    Filters (use either year/month OR from_date/to_date):
     - year: Target year (defaults to current year)
     - month: Single month to check (1-12)
     - months: Multiple months as comma-separated string (e.g., "1,2,3")
+    - from_date: Start date for date range (e.g., "2025-01-01")
+    - to_date: End date for date range (e.g., "2025-03-31")
     - group_id: Filter by specific group
 
     Examples:
     - /unpaid?year=2025&month=1 - Debtors for January 2025
     - /unpaid?year=2025&months=1,2,3 - Debtors for Jan, Feb, Mar 2025
+    - /unpaid?from_date=2025-01-01&to_date=2025-03-31 - Debtors for Q1 2025
     - /unpaid?year=2025 - Debtors for any month in 2025
     - /unpaid?year=2025&group_id=5 - Debtors in group 5 for 2025
     """
     from app.models.domain import Contract
     from app.models.enums import ContractStatus, PaymentStatus
-    from datetime import date
+    from datetime import date as date_type
+    from dateutil.relativedelta import relativedelta
 
     # Default to current year
-    today = date.today()
-    target_year = year if year is not None else today.year
+    today = date_type.today()
 
-    # Parse target months
+    # Determine which filtering mode to use: date range or year/month
+    use_date_range = from_date is not None or to_date is not None
+
+    # Parse target months as (year, month) tuples
     target_months = []
-    if months:
-        # Parse comma-separated months
-        try:
-            target_months = [int(m.strip()) for m in months.split(',') if m.strip()]
-            # Validate months
-            for m in target_months:
-                if m < 1 or m > 12:
-                    raise HTTPException(status_code=400, detail=f"Invalid month: {m}. Must be between 1 and 12")
-        except ValueError:
-            raise HTTPException(status_code=400, detail="Invalid months format. Use comma-separated numbers (e.g., '1,2,3')")
-    elif month is not None:
-        # Single month specified
-        target_months = [month]
+
+    if use_date_range:
+        # Date range mode
+        if from_date is None:
+            from_date = date_type(today.year, 1, 1)  # Default to start of current year
+        if to_date is None:
+            to_date = today  # Default to today
+
+        if from_date > to_date:
+            raise HTTPException(status_code=400, detail="from_date must be before or equal to to_date")
+
+        # Calculate all months in the date range
+        current_date = from_date.replace(day=1)
+        end_date = to_date.replace(day=1)
+
+        while current_date <= end_date:
+            target_months.append((current_date.year, current_date.month))
+            current_date += relativedelta(months=1)
     else:
-        # No months specified - check all 12 months of the year
-        target_months = list(range(1, 13))
+        # Year/month mode (existing logic)
+        target_year = year if year is not None else today.year
+
+        month_list = []
+        if months:
+            # Parse comma-separated months
+            try:
+                month_list = [int(m.strip()) for m in months.split(',') if m.strip()]
+                # Validate months
+                for m in month_list:
+                    if m < 1 or m > 12:
+                        raise HTTPException(status_code=400, detail=f"Invalid month: {m}. Must be between 1 and 12")
+            except ValueError:
+                raise HTTPException(status_code=400, detail="Invalid months format. Use comma-separated numbers (e.g., '1,2,3')")
+        elif month is not None:
+            # Single month specified
+            month_list = [month]
+        else:
+            # No months specified - check all 12 months of the year
+            month_list = list(range(1, 13))
+
+        # Convert to (year, month) tuples
+        target_months = [(target_year, m) for m in month_list]
 
     # Build student query with filters
     students_query = select(Student).where(Student.status == "active")
@@ -258,10 +292,10 @@ async def get_unpaid_students(
         total_paid = 0
         active_contracts_count = 0
 
-        for target_month in target_months:
+        for target_year_month, target_month_num in target_months:
             # Calculate expected payment for this month
             month_expected = 0
-            target_date = date(target_year, target_month, 1)
+            target_date = date_type(target_year_month, target_month_num, 1)
 
             for contract in contracts:
                 # Determine the effective end date (earliest of end_date or terminated_at)
@@ -296,8 +330,8 @@ async def get_unpaid_students(
                 select(func.sum(Transaction.amount)).where(
                     Transaction.student_id == student.id,
                     Transaction.status == PaymentStatus.SUCCESS,
-                    Transaction.payment_year == target_year,
-                    Transaction.payment_months.op('@>')(cast([target_month], JSONB))
+                    Transaction.payment_year == target_year_month,
+                    Transaction.payment_months.op('@>')(cast([target_month_num], JSONB))
                 )
             )
             month_paid = transactions_result.scalar() or 0
@@ -344,39 +378,71 @@ async def export_unpaid_students(
     year: Optional[int] = None,
     month: Optional[int] = Query(None, ge=1, le=12),
     months: Optional[str] = Query(None, description="Comma-separated months (e.g., '1,2,3')"),
+    from_date: Optional[date] = Query(None, description="Start date for date range filtering (YYYY-MM-DD)"),
+    to_date: Optional[date] = Query(None, description="End date for date range filtering (YYYY-MM-DD)"),
     group_id: Optional[int] = None,
 ):
     """
-    Export unpaid students data to Excel file.
+    Export unpaid students data to Excel file with statistics.
 
-    Same filters as /unpaid endpoint:
+    Same filters as /unpaid endpoint (use either year/month OR from_date/to_date):
     - year: Target year (defaults to current year)
     - month: Single month to check (1-12)
     - months: Multiple months as comma-separated string
+    - from_date: Start date for date range (e.g., "2025-01-01")
+    - to_date: End date for date range (e.g., "2025-03-31")
     - group_id: Filter by specific group
     """
     from app.models.domain import Contract, Group
     from app.models.enums import ContractStatus, PaymentStatus
-    from datetime import date
+    from datetime import date as date_type
+    from dateutil.relativedelta import relativedelta
 
     # Default to current year
-    today = date.today()
-    target_year = year if year is not None else today.year
+    today = date_type.today()
 
-    # Parse target months
+    # Determine which filtering mode to use: date range or year/month
+    use_date_range = from_date is not None or to_date is not None
+
+    # Parse target months as (year, month) tuples
     target_months = []
-    if months:
-        try:
-            target_months = [int(m.strip()) for m in months.split(',') if m.strip()]
-            for m in target_months:
-                if m < 1 or m > 12:
-                    raise HTTPException(status_code=400, detail=f"Invalid month: {m}. Must be between 1 and 12")
-        except ValueError:
-            raise HTTPException(status_code=400, detail="Invalid months format. Use comma-separated numbers")
-    elif month is not None:
-        target_months = [month]
+
+    if use_date_range:
+        # Date range mode
+        if from_date is None:
+            from_date = date_type(today.year, 1, 1)
+        if to_date is None:
+            to_date = today
+
+        if from_date > to_date:
+            raise HTTPException(status_code=400, detail="from_date must be before or equal to to_date")
+
+        # Calculate all months in the date range
+        current_date = from_date.replace(day=1)
+        end_date = to_date.replace(day=1)
+
+        while current_date <= end_date:
+            target_months.append((current_date.year, current_date.month))
+            current_date += relativedelta(months=1)
     else:
-        target_months = list(range(1, 13))
+        # Year/month mode
+        target_year = year if year is not None else today.year
+
+        month_list = []
+        if months:
+            try:
+                month_list = [int(m.strip()) for m in months.split(',') if m.strip()]
+                for m in month_list:
+                    if m < 1 or m > 12:
+                        raise HTTPException(status_code=400, detail=f"Invalid month: {m}. Must be between 1 and 12")
+            except ValueError:
+                raise HTTPException(status_code=400, detail="Invalid months format. Use comma-separated numbers")
+        elif month is not None:
+            month_list = [month]
+        else:
+            month_list = list(range(1, 13))
+
+        target_months = [(target_year, m) for m in month_list]
 
     # Build student query with filters
     students_query = select(Student).where(Student.status == "active")
@@ -408,9 +474,9 @@ async def export_unpaid_students(
         total_expected = 0
         total_paid = 0
 
-        for target_month in target_months:
+        for target_year_month, target_month_num in target_months:
             month_expected = 0
-            target_date = date(target_year, target_month, 1)
+            target_date = date_type(target_year_month, target_month_num, 1)
 
             for contract in contracts:
                 effective_end_date = contract.end_date
@@ -431,8 +497,8 @@ async def export_unpaid_students(
                 select(func.sum(Transaction.amount)).where(
                     Transaction.student_id == student.id,
                     Transaction.status == PaymentStatus.SUCCESS,
-                    Transaction.payment_year == target_year,
-                    Transaction.payment_months.op('@>')(cast([target_month], JSONB))
+                    Transaction.payment_year == target_year_month,
+                    Transaction.payment_months.op('@>')(cast([target_month_num], JSONB))
                 )
             )
             month_paid = transactions_result.scalar() or 0
@@ -533,9 +599,308 @@ async def export_unpaid_students(
     wb.save(excel_file)
     excel_file.seek(0)
 
+    # Generate filename based on filter type
+    if use_date_range:
+        date_str = f"{from_date.strftime('%Y%m%d')}_{to_date.strftime('%Y%m%d')}"
+        filename = f"unpaid_students_{date_str}{group_name}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx"
+    else:
+        # Extract just the month numbers for display
+        month_nums = [m[1] for m in target_months]
+        months_str = ",".join(map(str, month_nums)) if len(month_nums) <= 3 else "all"
+        filename = f"unpaid_students_{target_year}_{months_str}{group_name}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx"
+
+    # Return as streaming response
+    return StreamingResponse(
+        excel_file,
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": f"attachment; filename={filename}"}
+    )
+
+
+@router.get("/comprehensive-export", dependencies=[Depends(require_permission(PERM_STUDENTS_VIEW))])
+async def export_comprehensive_student_data(
+    db: Annotated[AsyncSession, Depends(get_db)],
+    from_date: Optional[date] = Query(None, description="Start date for payment history (YYYY-MM-DD)"),
+    to_date: Optional[date] = Query(None, description="End date for payment history (YYYY-MM-DD)"),
+    group_id: Optional[int] = Query(None, description="Filter by specific group"),
+    status: Optional[str] = Query(None, description="Filter by student status (active, archived, etc.)"),
+):
+    """
+    Export comprehensive student data to Excel file including:
+    - Student information (name, phone, address, date of birth, status)
+    - Contract details (number, start/end dates, monthly fee, status, termination info)
+    - Payment history (paid/unpaid months with details)
+    - Group information
+    - Parent information
+
+    Filters:
+    - from_date: Start date for payment history analysis (defaults to start of current year)
+    - to_date: End date for payment history analysis (defaults to today)
+    - group_id: Filter students by specific group
+    - status: Filter by student status (e.g., 'active', 'archived')
+    """
+    from app.models.domain import Contract, Group, Parent
+    from app.models.enums import ContractStatus, PaymentStatus
+    from datetime import date as date_type
+    from dateutil.relativedelta import relativedelta
+    from sqlalchemy.orm import selectinload
+
+    # Default date range
+    today = date_type.today()
+    if from_date is None:
+        from_date = date_type(today.year, 1, 1)  # Start of current year
+    if to_date is None:
+        to_date = today
+
+    if from_date > to_date:
+        raise HTTPException(status_code=400, detail="from_date must be before or equal to to_date")
+
+    # Calculate all months in the date range
+    all_months = []
+    current_date = from_date.replace(day=1)
+    end_date = to_date.replace(day=1)
+
+    while current_date <= end_date:
+        all_months.append((current_date.year, current_date.month))
+        current_date += relativedelta(months=1)
+
+    # Build student query with filters
+    students_query = select(Student).options(
+        selectinload(Student.group),
+        selectinload(Student.parents),
+        selectinload(Student.contracts)
+    )
+
+    if group_id:
+        students_query = students_query.where(Student.group_id == group_id)
+
+    if status:
+        students_query = students_query.where(Student.status == status)
+
+    students_result = await db.execute(students_query)
+    students = students_result.scalars().all()
+
+    # Prepare data for Excel
+    student_data_list = []
+
+    for student in students:
+        # Get all contracts for this student
+        contracts = student.contracts
+
+        # Get parent information
+        parent_names = ", ".join([f"{p.first_name} {p.last_name}" for p in student.parents]) if student.parents else "N/A"
+        parent_phones = ", ".join([p.phone for p in student.parents]) if student.parents else "N/A"
+
+        # Get group name
+        group_name = student.group.name if student.group else "N/A"
+
+        # Process each contract
+        if not contracts:
+            # Student without contracts
+            student_data_list.append({
+                "student_id": student.id,
+                "first_name": student.first_name,
+                "last_name": student.last_name,
+                "date_of_birth": student.date_of_birth.strftime("%Y-%m-%d"),
+                "phone": student.phone or "N/A",
+                "address": student.address or "N/A",
+                "status": student.status.value,
+                "group": group_name,
+                "parent_names": parent_names,
+                "parent_phones": parent_phones,
+                "contract_number": "N/A",
+                "contract_start": "N/A",
+                "contract_end": "N/A",
+                "contract_status": "N/A",
+                "monthly_fee": 0,
+                "terminated_at": "N/A",
+                "termination_reason": "N/A",
+                "paid_months": "N/A",
+                "unpaid_months": "N/A",
+                "total_expected": 0,
+                "total_paid": 0,
+                "debt_amount": 0,
+            })
+        else:
+            for contract in contracts:
+                # Calculate payment status for this contract
+                total_expected = 0
+                total_paid = 0
+                paid_months_list = []
+                unpaid_months_list = []
+
+                for year_val, month_val in all_months:
+                    target_date = date_type(year_val, month_val, 1)
+
+                    # Check if this month falls within the contract period
+                    effective_end_date = contract.end_date
+                    if contract.terminated_at:
+                        termination_date = contract.terminated_at.date()
+                        if termination_date < effective_end_date:
+                            effective_end_date = termination_date
+
+                    contract_start_month = contract.start_date.replace(day=1)
+                    contract_end_month = effective_end_date.replace(day=1)
+
+                    if contract_start_month <= target_date <= contract_end_month:
+                        # Month is within contract period
+                        total_expected += float(contract.monthly_fee)
+
+                        # Check if student has paid for this month
+                        payment_result = await db.execute(
+                            select(func.sum(Transaction.amount)).where(
+                                Transaction.student_id == student.id,
+                                Transaction.contract_id == contract.id,
+                                Transaction.status == PaymentStatus.SUCCESS,
+                                Transaction.payment_year == year_val,
+                                Transaction.payment_months.op('@>')(cast([month_val], JSONB))
+                            )
+                        )
+                        month_paid = payment_result.scalar() or 0
+
+                        month_str = f"{year_val}-{month_val:02d}"
+                        if month_paid >= contract.monthly_fee:
+                            paid_months_list.append(month_str)
+                            total_paid += float(month_paid)
+                        else:
+                            unpaid_months_list.append(month_str)
+                            total_paid += float(month_paid)
+
+                debt_amount = max(total_expected - total_paid, 0)
+
+                # Format termination info
+                terminated_at_str = contract.terminated_at.strftime("%Y-%m-%d") if contract.terminated_at else "N/A"
+                termination_reason = contract.termination_reason if contract.termination_reason else "N/A"
+
+                student_data_list.append({
+                    "student_id": student.id,
+                    "first_name": student.first_name,
+                    "last_name": student.last_name,
+                    "date_of_birth": student.date_of_birth.strftime("%Y-%m-%d"),
+                    "phone": student.phone or "N/A",
+                    "address": student.address or "N/A",
+                    "status": student.status.value,
+                    "group": group_name,
+                    "parent_names": parent_names,
+                    "parent_phones": parent_phones,
+                    "contract_number": contract.contract_number or "N/A",
+                    "contract_start": contract.start_date.strftime("%Y-%m-%d"),
+                    "contract_end": contract.end_date.strftime("%Y-%m-%d"),
+                    "contract_status": contract.status.value,
+                    "monthly_fee": float(contract.monthly_fee),
+                    "terminated_at": terminated_at_str,
+                    "termination_reason": termination_reason,
+                    "paid_months": ", ".join(paid_months_list) if paid_months_list else "None",
+                    "unpaid_months": ", ".join(unpaid_months_list) if unpaid_months_list else "None",
+                    "total_expected": total_expected,
+                    "total_paid": total_paid,
+                    "debt_amount": debt_amount,
+                })
+
+    # Create Excel workbook
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "Student Data"
+
+    # Define header style
+    header_fill = PatternFill(start_color="4472C4", end_color="4472C4", fill_type="solid")
+    header_font = Font(color="FFFFFF", bold=True, size=11)
+    header_alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
+
+    # Define headers
+    headers = [
+        "Student ID",
+        "First Name",
+        "Last Name",
+        "Date of Birth",
+        "Phone",
+        "Address",
+        "Status",
+        "Group",
+        "Parent Names",
+        "Parent Phones",
+        "Contract Number",
+        "Contract Start",
+        "Contract End",
+        "Contract Status",
+        "Monthly Fee",
+        "Terminated At",
+        "Termination Reason",
+        "Paid Months",
+        "Unpaid Months",
+        "Total Expected",
+        "Total Paid",
+        "Debt Amount",
+    ]
+
+    # Write headers
+    for col_num, header in enumerate(headers, 1):
+        cell = ws.cell(row=1, column=col_num, value=header)
+        cell.fill = header_fill
+        cell.font = header_font
+        cell.alignment = header_alignment
+
+    # Write data
+    for row_num, student_data in enumerate(student_data_list, 2):
+        ws.cell(row=row_num, column=1, value=student_data["student_id"])
+        ws.cell(row=row_num, column=2, value=student_data["first_name"])
+        ws.cell(row=row_num, column=3, value=student_data["last_name"])
+        ws.cell(row=row_num, column=4, value=student_data["date_of_birth"])
+        ws.cell(row=row_num, column=5, value=student_data["phone"])
+        ws.cell(row=row_num, column=6, value=student_data["address"])
+        ws.cell(row=row_num, column=7, value=student_data["status"])
+        ws.cell(row=row_num, column=8, value=student_data["group"])
+        ws.cell(row=row_num, column=9, value=student_data["parent_names"])
+        ws.cell(row=row_num, column=10, value=student_data["parent_phones"])
+        ws.cell(row=row_num, column=11, value=student_data["contract_number"])
+        ws.cell(row=row_num, column=12, value=student_data["contract_start"])
+        ws.cell(row=row_num, column=13, value=student_data["contract_end"])
+        ws.cell(row=row_num, column=14, value=student_data["contract_status"])
+        ws.cell(row=row_num, column=15, value=student_data["monthly_fee"])
+        ws.cell(row=row_num, column=16, value=student_data["terminated_at"])
+        ws.cell(row=row_num, column=17, value=student_data["termination_reason"])
+        ws.cell(row=row_num, column=18, value=student_data["paid_months"])
+        ws.cell(row=row_num, column=19, value=student_data["unpaid_months"])
+        ws.cell(row=row_num, column=20, value=student_data["total_expected"])
+        ws.cell(row=row_num, column=21, value=student_data["total_paid"])
+        ws.cell(row=row_num, column=22, value=student_data["debt_amount"])
+
+    # Adjust column widths
+    column_widths = {
+        'A': 12, 'B': 15, 'C': 15, 'D': 15, 'E': 15, 'F': 30,
+        'G': 12, 'H': 20, 'I': 25, 'J': 20, 'K': 18, 'L': 15,
+        'M': 15, 'N': 15, 'O': 12, 'P': 15, 'Q': 20, 'R': 50,
+        'S': 50, 'T': 15, 'U': 15, 'V': 15
+    }
+
+    for col, width in column_widths.items():
+        ws.column_dimensions[col].width = width
+
+    # Add summary row
+    if student_data_list:
+        summary_row = len(student_data_list) + 3
+        ws.cell(row=summary_row, column=1, value="TOTALS").font = Font(bold=True)
+        ws.cell(row=summary_row, column=20, value=sum(d["total_expected"] for d in student_data_list)).font = Font(bold=True)
+        ws.cell(row=summary_row, column=21, value=sum(d["total_paid"] for d in student_data_list)).font = Font(bold=True)
+        ws.cell(row=summary_row, column=22, value=sum(d["debt_amount"] for d in student_data_list)).font = Font(bold=True)
+
+        # Add metadata
+        metadata_row = summary_row + 2
+        ws.cell(row=metadata_row, column=1, value=f"Report Generated: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}").font = Font(italic=True)
+        ws.cell(row=metadata_row + 1, column=1, value=f"Period: {from_date.strftime('%Y-%m-%d')} to {to_date.strftime('%Y-%m-%d')}").font = Font(italic=True)
+        ws.cell(row=metadata_row + 2, column=1, value=f"Total Students: {len(set(d['student_id'] for d in student_data_list))}").font = Font(italic=True)
+        ws.cell(row=metadata_row + 3, column=1, value=f"Total Contracts: {len(student_data_list)}").font = Font(italic=True)
+
+    # Save to BytesIO
+    excel_file = BytesIO()
+    wb.save(excel_file)
+    excel_file.seek(0)
+
     # Generate filename
-    months_str = ",".join(map(str, target_months)) if len(target_months) <= 3 else "all"
-    filename = f"unpaid_students_{target_year}_{months_str}{group_name}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx"
+    group_suffix = f"_group{group_id}" if group_id else ""
+    status_suffix = f"_{status}" if status else ""
+    date_str = f"{from_date.strftime('%Y%m%d')}_{to_date.strftime('%Y%m%d')}"
+    filename = f"comprehensive_student_data_{date_str}{group_suffix}{status_suffix}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx"
 
     # Return as streaming response
     return StreamingResponse(
