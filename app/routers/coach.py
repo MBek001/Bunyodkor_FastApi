@@ -388,7 +388,7 @@ async def get_coach_created_attendances(
     attendance_query = select(Attendance).options(
         selectinload(Attendance.student),
         selectinload(Attendance.session).selectinload(Session.group),
-        selectinload(Attendance.marked_by_user)
+        selectinload(Attendance.marked_by)
     ).where(Attendance.marked_by_user_id == user.id)
 
     # Apply date filters via session
