@@ -360,3 +360,59 @@ async def get_student_attendance_stats(
         late_count=late,
         attendance_rate=round(attendance_rate, 2)
     ))
+
+
+@router.get("/my-attendances", response_model=DataResponse[list[AttendanceRead]], dependencies=[Depends(require_permission(PERM_ATTENDANCE_COACH_MARK))])
+async def get_coach_created_attendances(
+    user: CurrentUser,
+    db: Annotated[AsyncSession, Depends(get_db)],
+    from_date: Optional[date] = None,
+    to_date: Optional[date] = None,
+    group_id: Optional[int] = None,
+    student_id: Optional[int] = None,
+):
+    """
+    Get all attendance records created by the coach (read-only).
+
+    This endpoint allows coaches to view all attendances they have marked,
+    including for all groups and students. Coaches cannot edit these records
+    through this endpoint - it's read-only.
+
+    Filters:
+    - from_date: Filter by session date (start)
+    - to_date: Filter by session date (end)
+    - group_id: Filter by specific group
+    - student_id: Filter by specific student
+    """
+    # Build query for attendances created by this coach
+    attendance_query = select(Attendance).options(
+        selectinload(Attendance.student),
+        selectinload(Attendance.session).selectinload(Session.group),
+        selectinload(Attendance.marked_by_user)
+    ).where(Attendance.marked_by_user_id == user.id)
+
+    # Apply date filters via session
+    if from_date or to_date:
+        attendance_query = attendance_query.join(Session)
+        if from_date:
+            attendance_query = attendance_query.where(Session.session_date >= from_date)
+        if to_date:
+            attendance_query = attendance_query.where(Session.session_date <= to_date)
+
+    # Apply group filter via session
+    if group_id:
+        if not (from_date or to_date):  # Only join if not already joined
+            attendance_query = attendance_query.join(Session)
+        attendance_query = attendance_query.where(Session.group_id == group_id)
+
+    # Apply student filter
+    if student_id:
+        attendance_query = attendance_query.where(Attendance.student_id == student_id)
+
+    # Order by most recent first
+    attendance_query = attendance_query.order_by(Attendance.created_at.desc())
+
+    attendances_result = await db.execute(attendance_query)
+    attendances = attendances_result.scalars().all()
+
+    return DataResponse(data=[AttendanceRead.model_validate(a) for a in attendances])

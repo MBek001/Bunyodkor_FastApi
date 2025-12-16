@@ -12,6 +12,10 @@ async def create_manual_transaction(
     data: ManualTransactionCreate,
     user_id: int,
 ) -> Transaction:
+    from sqlalchemy.dialects.postgresql import JSONB
+    from sqlalchemy import cast, func
+    from app.models.enums import ContractStatus
+
     # Find contract by contract_number
     contract_result = await db.execute(
         select(Contract).where(Contract.contract_number == data.contract_number)
@@ -20,6 +24,13 @@ async def create_manual_transaction(
 
     if not contract:
         raise ValueError(f"Contract with number '{data.contract_number}' not found")
+
+    # Validate contract is ACTIVE
+    if contract.status != ContractStatus.ACTIVE:
+        raise ValueError(
+            f"Contract '{data.contract_number}' is not active (current status: {contract.status.value}). "
+            f"Only ACTIVE contracts can receive new payments."
+        )
 
     # Validate payment months
     if not data.payment_months:
@@ -35,6 +46,27 @@ async def create_manual_transaction(
         termination_date = contract.terminated_at.date()
         if termination_date < effective_end_date:
             effective_end_date = termination_date
+
+    # Check for duplicate payments - prevent paying for the same month twice
+    for month in data.payment_months:
+        existing_payment = await db.execute(
+            select(Transaction).where(
+                Transaction.contract_id == contract.id,
+                Transaction.student_id == contract.student_id,
+                Transaction.status == PaymentStatus.SUCCESS,
+                Transaction.payment_year == data.payment_year,
+                Transaction.payment_months.op('@>')(cast([month], JSONB))
+            )
+        )
+        existing = existing_payment.scalar_one_or_none()
+
+        if existing:
+            month_name = date(data.payment_year, month, 1).strftime('%B')
+            raise ValueError(
+                f"Payment for {month_name} {data.payment_year} already exists for this contract. "
+                f"Cannot add duplicate payment for the same month. "
+                f"Existing transaction ID: {existing.id}"
+            )
 
     # Validate that payment months fall within contract period
     for month in data.payment_months:
