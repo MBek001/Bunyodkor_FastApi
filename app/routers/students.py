@@ -9,10 +9,10 @@ from openpyxl.styles import Font, PatternFill, Alignment
 from io import BytesIO
 from datetime import datetime, date
 from app.core.db import get_db
-from app.core.permissions import PERM_STUDENTS_VIEW, PERM_STUDENTS_EDIT
+from app.core.permissions import PERM_STUDENTS_VIEW, PERM_STUDENTS_EDIT, PERM_ATTENDANCE_VIEW
 from app.models.domain import Student
 from app.models.finance import Transaction
-from app.models.attendance import Attendance, GateLog
+from app.models.attendance import Attendance, GateLog, Session
 from app.models.enums import StudentStatus, ContractStatus
 from app.schemas.student import StudentRead, StudentCreate, StudentUpdate, StudentDebtInfo, StudentFullInfo, ParentRead
 from app.schemas.contract import ContractRead
@@ -1584,6 +1584,87 @@ async def get_student_gatelogs(
     result = await db.execute(select(GateLog).where(GateLog.student_id == student_id))
     logs = result.scalars().all()
     return DataResponse(data=[GateLogRead.model_validate(l) for l in logs])
+
+
+@router.get("/attendances/all", response_model=DataResponse[list[AttendanceRead]], dependencies=[Depends(require_permission(PERM_ATTENDANCE_VIEW))])
+async def get_all_attendances(
+    db: Annotated[AsyncSession, Depends(get_db)],
+    from_date: Optional[date] = Query(None, description="Start date for filtering (YYYY-MM-DD)"),
+    to_date: Optional[date] = Query(None, description="End date for filtering (YYYY-MM-DD)"),
+    group_id: Optional[int] = Query(None, description="Filter by group ID"),
+    student_id: Optional[int] = Query(None, description="Filter by student ID"),
+    page: int = Query(1, ge=1, description="Page number"),
+    page_size: int = Query(50, ge=1, le=100, description="Items per page"),
+):
+    """
+    Get all student attendances with filters.
+
+    This endpoint allows authorized users to view all attendance records
+    with various filters including date range, group, and student.
+
+    Filters:
+    - from_date: Filter by session date (start)
+    - to_date: Filter by session date (end)
+    - group_id: Filter by specific group
+    - student_id: Filter by specific student
+    - page: Page number for pagination
+    - page_size: Number of records per page (max 100)
+
+    Note: This is for viewing marked attendances (coach-created).
+    Turnstile/gate attendance is handled separately.
+    """
+    from sqlalchemy.orm import selectinload
+
+    # Build query for all attendances
+    attendance_query = select(Attendance).options(
+        selectinload(Attendance.student),
+        selectinload(Attendance.session).selectinload(Session.group),
+        selectinload(Attendance.marked_by)
+    )
+
+    # Apply date filters via session
+    if from_date or to_date:
+        attendance_query = attendance_query.join(Session)
+        if from_date:
+            attendance_query = attendance_query.where(Session.session_date >= from_date)
+        if to_date:
+            attendance_query = attendance_query.where(Session.session_date <= to_date)
+
+    # Apply group filter via session
+    if group_id:
+        if not (from_date or to_date):  # Only join if not already joined
+            attendance_query = attendance_query.join(Session)
+        attendance_query = attendance_query.where(Session.group_id == group_id)
+
+    # Apply student filter
+    if student_id:
+        attendance_query = attendance_query.where(Attendance.student_id == student_id)
+
+    # Order by most recent first
+    attendance_query = attendance_query.order_by(Attendance.created_at.desc())
+
+    # Get total count for pagination
+    count_query = select(func.count()).select_from(attendance_query.subquery())
+    total_result = await db.execute(count_query)
+    total = total_result.scalar() or 0
+
+    # Apply pagination
+    offset = (page - 1) * page_size
+    attendance_query = attendance_query.offset(offset).limit(page_size)
+
+    # Execute query
+    attendances_result = await db.execute(attendance_query)
+    attendances = attendances_result.scalars().all()
+
+    return DataResponse(
+        data=[AttendanceRead.model_validate(a) for a in attendances],
+        meta=PaginationMeta(
+            page=page,
+            page_size=page_size,
+            total=total,
+            total_pages=(total + page_size - 1) // page_size,
+        ),
+    )
 
 
 @router.delete("/{student_id}", response_model=DataResponse[dict], dependencies=[Depends(require_permission(PERM_STUDENTS_EDIT))])
