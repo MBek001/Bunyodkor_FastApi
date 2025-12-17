@@ -24,7 +24,7 @@ router = APIRouter(prefix="/transactions", tags=["Transactions"])
 @router.get("", response_model=DataResponse[list[TransactionRead]], dependencies=[Depends(require_permission(PERM_FINANCE_TRANSACTIONS_VIEW))])
 async def get_transactions(
     db: Annotated[AsyncSession, Depends(get_db)],
-    payment_year: int | None = Query(None, description="Filter by payment year (defaults to current year)"),
+    payment_year: int | None = Query(None, description="Filter by payment year (optional, shows all years if not specified)"),
     from_date: Optional[datetime] = None,
     to_date: Optional[datetime] = None,
     status: Optional[str] = None,
@@ -37,16 +37,15 @@ async def get_transactions(
     Get all transactions with optional filters.
 
     Default behavior:
-    - Shows current year's transactions only (by payment_year)
-    - Can filter by date range, status, source, student
+    - Shows all transactions from all years
+    - Can filter by payment_year, date range, status, source, student
     """
-    # Default to current year if not specified
-    if payment_year is None:
-        from datetime import datetime as dt
-        payment_year = dt.now().year
-
     query = select(Transaction)
-    conditions = [Transaction.payment_year == payment_year]
+    conditions = []
+
+    # Only filter by year if explicitly provided
+    if payment_year is not None:
+        conditions.append(Transaction.payment_year == payment_year)
 
     if from_date:
         conditions.append(Transaction.created_at >= from_date)
@@ -61,6 +60,9 @@ async def get_transactions(
 
     if conditions:
         query = query.where(and_(*conditions))
+
+    # Order by most recent first
+    query = query.order_by(Transaction.created_at.desc())
 
     offset = (page - 1) * page_size
     result = await db.execute(query.offset(offset).limit(page_size))
