@@ -1,10 +1,10 @@
 """
 Contract number allocation service.
 
-Handles contract number generation based on student birth year and group capacity.
-Format: N{sequence}{year}
-Examples: N12020, N22020, N32020 for students born in 2020
-          N12012, N22012, N32012 for students born in 2012
+Handles contract number generation based on student birth year, group identifier and capacity.
+Format: N{identifier}{sequence}{year}
+Examples: N1B12020, N1B22020, N1B32020 for group 1B, students born in 2020
+          N2C12019, N2C22019, N2C32019 for group 2C, students born in 2019
 
 IMPORTANT: Once a contract number is used, it can NEVER be reused.
 Only the status changes (ACTIVE -> EXPIRED -> TERMINATED).
@@ -94,7 +94,7 @@ async def allocate_contract_number(
 
     Returns:
         Tuple of (contract_number, birth_year, sequence_number)
-        Example: ("N12020", 2020, 1)
+        Example: ("N1B12020", 2020, 1) for group 1B
 
     Raises:
         ContractNumberAllocationError: If allocation fails
@@ -108,6 +108,13 @@ async def allocate_contract_number(
 
     birth_year = student.date_of_birth.year
 
+    # Get group to get identifier
+    group_result = await db.execute(select(Group).where(Group.id == group_id))
+    group = group_result.scalar_one_or_none()
+
+    if not group:
+        raise ContractNumberAllocationError(f"Group with ID {group_id} not found")
+
     # Get available numbers
     available_numbers = await get_available_contract_numbers(db, group_id, birth_year)
 
@@ -119,7 +126,7 @@ async def allocate_contract_number(
 
     # Use the first available number
     sequence_number = available_numbers[0]
-    contract_number = f"N{sequence_number}{birth_year}"
+    contract_number = f"N{group.identifier}{sequence_number}{birth_year}"
 
     return contract_number, birth_year, sequence_number
 
@@ -200,7 +207,7 @@ async def validate_contract_number(
 
     Args:
         db: Database session
-        contract_number: Contract number to validate (e.g., "N32017")
+        contract_number: Contract number to validate (e.g., "N1B12020")
         group_id: Group ID
         birth_year: Student's birth year
         archive_year: Archive year filter (defaults to current year)
@@ -211,44 +218,44 @@ async def validate_contract_number(
         - message: Error/success message
         - sequence_number: Extracted sequence number if valid
     """
+    import re
     from datetime import datetime
     if archive_year is None:
         archive_year = datetime.now().year
 
-    # Parse contract number (format: N{seq}{year})
-    try:
-        if not contract_number.startswith('N'):
-            return False, "Contract number must start with 'N'", None
-
-        # Extract parts
-        rest = contract_number[1:]  # Remove 'N'
-
-        # Find where year starts (last 4 digits)
-        if len(rest) < 5:  # At least 1 digit for seq + 4 for year
-            return False, f"Contract number format invalid: {contract_number}", None
-
-        year_str = rest[-4:]
-        seq_str = rest[:-4]
-
-        try:
-            extracted_year = int(year_str)
-            sequence_number = int(seq_str)
-        except ValueError:
-            return False, f"Cannot parse contract number: {contract_number}", None
-
-        # Validate year matches
-        if extracted_year != birth_year:
-            return False, f"Contract year {extracted_year} does not match student birth year {birth_year}", None
-
-    except Exception as e:
-        return False, f"Invalid contract number format: {str(e)}", None
-
-    # Get group capacity
+    # Get group to verify identifier
     group_result = await db.execute(select(Group).where(Group.id == group_id))
     group = group_result.scalar_one_or_none()
 
     if not group:
         return False, f"Group {group_id} not found", None
+
+    # Parse contract number (format: N{identifier}{seq}{year})
+    try:
+        if not contract_number.startswith('N'):
+            return False, "Contract number must start with 'N'", None
+
+        # Verify it ends with birth year
+        if not contract_number.endswith(str(birth_year)):
+            return False, f"Contract number must end with birth year {birth_year}", None
+
+        # Extract middle part (identifier + sequence)
+        middle = contract_number[1:-len(str(birth_year))]
+
+        # Match pattern: identifier (letters/numbers) + sequence (numbers only)
+        match = re.match(r'^(.+?)(\d+)$', middle)
+        if not match:
+            return False, f"Invalid contract number format: {contract_number}. Expected format: N{{identifier}}{{seq}}{{year}}", None
+
+        extracted_identifier = match.group(1)
+        sequence_number = int(match.group(2))
+
+        # Verify identifier matches group
+        if extracted_identifier != group.identifier:
+            return False, f"Contract identifier '{extracted_identifier}' doesn't match group identifier '{group.identifier}'", None
+
+    except Exception as e:
+        return False, f"Invalid contract number format: {str(e)}", None
 
     # Check if sequence is within capacity
     if sequence_number < 1 or sequence_number > group.capacity:
@@ -273,7 +280,7 @@ async def validate_contract_number(
         # Find next available
         next_available = available_numbers[0] if available_numbers else None
         if next_available:
-            return False, f"Number {sequence_number} is already used. Next available: N{next_available}{birth_year}", next_available
+            return False, f"Number {sequence_number} is already used. Next available: N{group.identifier}{next_available}{birth_year}", next_available
         else:
             return False, f"No available numbers for birth year {birth_year} in this group", None
 
