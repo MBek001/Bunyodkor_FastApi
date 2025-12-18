@@ -122,7 +122,7 @@ async def click_payment(
     # =========================
     # SECURITY: Validate service_id
     # =========================
-    if data.service_id != settings.CLICK_SERVICE_ID:
+    if str(data.service_id) != settings.CLICK_SERVICE_ID:
         return {
             "error": -3,
             "error_note": "Action not found"
