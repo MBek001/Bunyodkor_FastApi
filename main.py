@@ -16,7 +16,6 @@ from app.routers import (
     gate,
     reports,
     settings,
-    public,
     import_router,
     backup,
     waiting_list,
@@ -105,7 +104,6 @@ app.include_router(coach.router)
 app.include_router(gate.router)
 app.include_router(reports.router)
 app.include_router(settings.router)
-app.include_router(public.router)
 app.include_router(import_router.router)
 app.include_router(backup.router)
 app.include_router(waiting_list.router)
