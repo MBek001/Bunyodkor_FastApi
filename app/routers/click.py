@@ -1,7 +1,8 @@
 from typing import Annotated
 from fastapi import APIRouter, Depends
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, and_
+from sqlalchemy import select, and_, cast
+from sqlalchemy.dialects.postgresql import JSONB
 from datetime import datetime
 import hashlib
 from pydantic import BaseModel
@@ -33,6 +34,14 @@ class ClickRequest(BaseModel):
 
 
 # =========================
+# CONSTANTS
+# =========================
+# Click params order for paramsIV calculation
+# CRITICAL: Must match the order Click sends params
+PARAMS_ORDER = ["contract", "full_name", "service_type", "amount"]
+
+
+# =========================
 # HELPERS
 # =========================
 def md5_hash(value: str) -> str:
@@ -42,12 +51,15 @@ def md5_hash(value: str) -> str:
 
 def get_params_iv(params: dict) -> str:
     """
-    Get all values from params dict in order
+    Get all values from params dict in FIXED order
     paramsIV = all values of params object in transmitted order
+
+    CRITICAL: dict.values() order is not guaranteed to match Click's order
+    We must use a fixed order that matches Click's specification
     """
     if not params:
         return ""
-    return "".join(str(value) for value in params.values())
+    return "".join(str(params[k]) for k in PARAMS_ORDER if k in params)
 
 
 def verify_signature(data: ClickRequest) -> bool:
@@ -106,6 +118,15 @@ async def click_payment(
     - 4: Compare - Get reconciliation report (no signature required)
     """
     action = data.action
+
+    # =========================
+    # SECURITY: Validate service_id
+    # =========================
+    if data.service_id != settings.CLICK_SERVICE_ID:
+        return {
+            "error": -3,
+            "error_note": "Action not found"
+        }
 
     # =========================
     # ACTION 0: GETINFO
@@ -177,12 +198,14 @@ async def click_payment(
             }
 
         contract_number = data.params.get("contract")
-        amount = data.params.get("amount")
 
-        if not amount:
+        # Convert amount to float (Click may send it as string)
+        try:
+            amount = float(data.params.get("amount"))
+        except (TypeError, ValueError):
             return {
-                "error": -8,
-                "error_note": "Ошибка в запросе от CLICK"
+                "error": -2,
+                "error_note": "Incorrect parameter amount"
             }
 
         # Find contract
@@ -204,11 +227,50 @@ async def click_payment(
                 "error_note": "Абонент не найден"
             }
 
-        # Validate amount
-        if float(amount) < float(contract.monthly_fee):
+        # Validate amount (amount is already float from try/except above)
+        if amount < float(contract.monthly_fee):
             return {
                 "error": -2,
                 "error_note": f"Неверная сумма оплаты. Минимум: {contract.monthly_fee}"
+            }
+
+        # Validate payment month is within contract period
+        current_date = datetime.now().date()
+        current_year = datetime.now().year
+        current_month = datetime.now().month
+
+        if current_date < contract.start_date:
+            return {
+                "error": -5,
+                "error_note": f"Договор еще не начался. Начало: {contract.start_date.isoformat()}"
+            }
+
+        if current_date > contract.end_date:
+            return {
+                "error": -5,
+                "error_note": f"Договор истек. Окончание: {contract.end_date.isoformat()}"
+            }
+
+        # Check for duplicate payment for current month
+        duplicate_check = await db.execute(
+            select(Transaction).where(
+                Transaction.contract_id == contract.id,
+                Transaction.status == PaymentStatus.SUCCESS,
+                Transaction.payment_year == current_year,
+                Transaction.payment_months.op('@>')(cast([current_month], JSONB))
+            )
+        )
+        duplicate = duplicate_check.scalar_one_or_none()
+
+        if duplicate:
+            month_names = {
+                1: "январь", 2: "февраль", 3: "март", 4: "апрель",
+                5: "май", 6: "июнь", 7: "июль", 8: "август",
+                9: "сентябрь", 10: "октябрь", 11: "ноябрь", 12: "декабрь"
+            }
+            return {
+                "error": -4,
+                "error_note": f"Оплата за {month_names[current_month]} {current_year} уже существует"
             }
 
         # Check for existing transaction with same click_paydoc_id
@@ -297,6 +359,13 @@ async def click_payment(
                 "error_note": "Транзакция не найдена"
             }
 
+        # FRAUD PROTECTION: Validate click_paydoc_id matches transaction
+        if transaction.external_id != str(data.click_paydoc_id):
+            return {
+                "error": -6,
+                "error_note": "Транзакция не найдена"
+            }
+
         # Check if already confirmed
         if transaction.status == PaymentStatus.SUCCESS:
             return {
@@ -314,14 +383,64 @@ async def click_payment(
                 "error_note": "Транзакция отменена"
             }
 
+        # Get contract to verify it's still valid
+        contract_result = await db.execute(
+            select(Contract).where(Contract.id == transaction.contract_id)
+        )
+        contract = contract_result.scalar_one_or_none()
+
+        if not contract:
+            return {
+                "error": -6,
+                "error_note": "Транзакция не найдена"
+            }
+
+        # Final validation: Check contract is still ACTIVE
+        if contract.status != ContractStatus.ACTIVE:
+            return {
+                "error": -5,
+                "error_note": "Абонент не найден"
+            }
+
+        # Set payment year and month to current date
+        current_year = datetime.now().year
+        current_month = datetime.now().month
+        current_date = datetime.now().date()
+
+        # Validate payment date is still within contract period
+        if current_date < contract.start_date or current_date > contract.end_date:
+            return {
+                "error": -5,
+                "error_note": "Договор истек или еще не начался"
+            }
+
+        # Final check: Ensure no duplicate payment was created between PREPARE and CONFIRM
+        final_duplicate_check = await db.execute(
+            select(Transaction).where(
+                Transaction.contract_id == contract.id,
+                Transaction.status == PaymentStatus.SUCCESS,
+                Transaction.payment_year == current_year,
+                Transaction.payment_months.op('@>')(cast([current_month], JSONB))
+            )
+        )
+        final_duplicate = final_duplicate_check.scalar_one_or_none()
+
+        if final_duplicate:
+            # Cancel this transaction and return error
+            transaction.status = PaymentStatus.CANCELLED
+            transaction.comment = f"Cancelled: duplicate payment for month {current_month}"
+            await db.commit()
+            return {
+                "error": -4,
+                "error_note": "Оплата за этот месяц уже существует"
+            }
+
         # Confirm transaction
         transaction.status = PaymentStatus.SUCCESS
         transaction.paid_at = datetime.utcnow()
-        transaction.comment = f"Click confirmed: attempt {data.attempt_trans_id}"
-
-        # Set payment month to current month
-        current_month = datetime.now().month
+        transaction.payment_year = current_year
         transaction.payment_months = [current_month]
+        transaction.comment = f"Click confirmed: attempt {data.attempt_trans_id}, month {current_month}/{current_year}"
 
         await db.commit()
         await db.refresh(transaction)
@@ -417,6 +536,7 @@ async def click_payment(
                 and_(
                     Transaction.source == PaymentSource.CLICK,
                     Transaction.status == PaymentStatus.SUCCESS,
+                    Transaction.paid_at.is_not(None),
                     Transaction.paid_at >= from_date,
                     Transaction.paid_at < till_date
                 )
