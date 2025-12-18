@@ -96,7 +96,8 @@ async def create_group(
     """
     Create a new group with current year as archive year.
 
-    Birth year must be unique per archive year (excluding archived groups).
+    Identifier must be unique (enforced by database constraint).
+    Multiple groups can have the same birth year as long as identifiers are different.
     """
     if data.coach_id:
         from app.models.auth import User
@@ -106,23 +107,6 @@ async def create_group(
 
     from datetime import datetime
     current_year = datetime.now().year
-
-    # Check if birth_year already exists for current archive year (excluding archived groups)
-    existing_group = await db.execute(
-        select(Group).where(
-            and_(
-                Group.archive_year == current_year,
-                Group.birth_year == data.birth_year,
-                Group.status != GroupStatus.ARCHIVED
-            )
-        )
-    )
-    if existing_group.scalar_one_or_none():
-        raise HTTPException(
-            status_code=400,
-            detail=f"A group for birth year {data.birth_year} already exists in {current_year}. "
-                   f"Only one active group per birth year is allowed per archive year."
-        )
 
     group_data = data.model_dump()
     group_data['archive_year'] = current_year  # Set current year
@@ -156,7 +140,8 @@ async def update_group(
     """
     Update group details.
 
-    Birth year must remain unique per archive year (excluding archived groups).
+    Identifier must remain unique (enforced by database constraint).
+    Multiple groups can have the same birth year as long as identifiers are different.
     """
     result = await db.execute(select(Group).where(Group.id == group_id))
     group = result.scalar_one_or_none()
@@ -165,25 +150,6 @@ async def update_group(
         raise HTTPException(status_code=404, detail="Group not found")
 
     update_data = data.model_dump(exclude_unset=True)
-
-    # Check birth_year uniqueness if being updated
-    if "birth_year" in update_data:
-        existing_group = await db.execute(
-            select(Group).where(
-                and_(
-                    Group.id != group_id,  # Exclude current group
-                    Group.archive_year == group.archive_year,
-                    Group.birth_year == update_data["birth_year"],
-                    Group.status != GroupStatus.ARCHIVED
-                )
-            )
-        )
-        if existing_group.scalar_one_or_none():
-            raise HTTPException(
-                status_code=400,
-                detail=f"A group for birth year {update_data['birth_year']} already exists in {group.archive_year}. "
-                       f"Only one active group per birth year is allowed per archive year."
-            )
 
     if "coach_id" in update_data and update_data["coach_id"] is not None:
         from app.models.auth import User
