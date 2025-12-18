@@ -180,13 +180,18 @@ async def delete_group(
     group_id: int,
     db: Annotated[AsyncSession, Depends(get_db)],
 ):
+    """
+    Soft delete a group by setting its status to DELETED.
+    The group is not actually removed from the database.
+    """
     result = await db.execute(select(Group).where(Group.id == group_id))
     group = result.scalar_one_or_none()
 
     if not group:
         raise HTTPException(status_code=404, detail="Group not found")
 
-    await db.delete(group)
+    # Soft delete: set status to DELETED instead of actually deleting
+    group.status = GroupStatus.DELETED
     await db.commit()
 
     return DataResponse(data={"message": "Group deleted successfully"})
@@ -197,7 +202,10 @@ async def bulk_delete_groups(
     group_ids: list[int],
     db: Annotated[AsyncSession, Depends(get_db)],
 ):
-    """Bulk delete multiple groups by their IDs"""
+    """
+    Soft delete multiple groups by setting their status to DELETED.
+    Groups are not actually removed from the database.
+    """
     if not group_ids:
         raise HTTPException(status_code=400, detail="No group IDs provided")
 
@@ -213,7 +221,8 @@ async def bulk_delete_groups(
                 errors.append({"group_id": group_id, "error": "Group not found"})
                 continue
 
-            await db.delete(group)
+            # Soft delete: set status to DELETED instead of actually deleting
+            group.status = GroupStatus.DELETED
             deleted_count += 1
         except Exception as e:
             errors.append({"group_id": group_id, "error": str(e)})

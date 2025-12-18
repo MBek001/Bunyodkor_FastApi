@@ -1672,13 +1672,18 @@ async def delete_student(
     student_id: int,
     db: Annotated[AsyncSession, Depends(get_db)],
 ):
+    """
+    Soft delete a student by setting their status to DELETED.
+    The student is not actually removed from the database.
+    """
     result = await db.execute(select(Student).where(Student.id == student_id))
     student = result.scalar_one_or_none()
 
     if not student:
         raise HTTPException(status_code=404, detail="Student not found")
 
-    await db.delete(student)
+    # Soft delete: set status to DELETED instead of actually deleting
+    student.status = StudentStatus.DELETED
     await db.commit()
 
     return DataResponse(data={"message": "Student deleted successfully"})
@@ -1689,7 +1694,10 @@ async def bulk_delete_students(
     student_ids: list[int],
     db: Annotated[AsyncSession, Depends(get_db)],
 ):
-    """Bulk delete multiple students by their IDs"""
+    """
+    Soft delete multiple students by setting their status to DELETED.
+    Students are not actually removed from the database.
+    """
     if not student_ids:
         raise HTTPException(status_code=400, detail="No student IDs provided")
 
@@ -1705,7 +1713,8 @@ async def bulk_delete_students(
                 errors.append({"student_id": student_id, "error": "Student not found"})
                 continue
 
-            await db.delete(student)
+            # Soft delete: set status to DELETED instead of actually deleting
+            student.status = StudentStatus.DELETED
             deleted_count += 1
         except Exception as e:
             errors.append({"student_id": student_id, "error": str(e)})

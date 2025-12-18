@@ -14,7 +14,8 @@ async def create_manual_transaction(
 ) -> Transaction:
     from sqlalchemy.dialects.postgresql import JSONB
     from sqlalchemy import cast, func
-    from app.models.enums import ContractStatus
+    from app.models.enums import ContractStatus, StudentStatus
+    from app.models.domain import Student
 
     # Find contract by contract_number
     contract_result = await db.execute(
@@ -30,6 +31,21 @@ async def create_manual_transaction(
         raise ValueError(
             f"Contract '{data.contract_number}' is not active (current status: {contract.status.value}). "
             f"Only ACTIVE contracts can receive new payments."
+        )
+
+    # Validate student is ACTIVE
+    student_result = await db.execute(
+        select(Student).where(Student.id == contract.student_id)
+    )
+    student = student_result.scalar_one_or_none()
+
+    if not student:
+        raise ValueError(f"Student not found for contract '{data.contract_number}'")
+
+    if student.status != StudentStatus.ACTIVE:
+        raise ValueError(
+            f"Student is not active (current status: {student.status.value}). "
+            f"Only ACTIVE students can receive new payments."
         )
 
     # Validate payment months

@@ -17,6 +17,7 @@ class StudentStatus(str, Enum):
 class GroupStatus(str, Enum):
     """Group status for yearly archiving"""
     ACTIVE = "active"
+    DELETED = "deleted"
     ARCHIVED = "archived"
 
 
