@@ -38,7 +38,7 @@ class ClickRequest(BaseModel):
 # =========================
 # Click params order for paramsIV calculation
 # CRITICAL: Must match the order Click sends params
-PARAMS_ORDER = ["contract", "full_name", "service_type", "amount"]
+PARAMS_ORDER = ["contract", "full_name", "service_type", "amount", "payment_month", "payment_year"]
 
 
 # =========================
@@ -234,30 +234,65 @@ async def click_payment(
                 "error_note": f"Неверная сумма оплаты. Минимум: {contract.monthly_fee}"
             }
 
-        # Validate payment month is within contract period
-        current_date = datetime.now().date()
-        current_year = datetime.now().year
-        current_month = datetime.now().month
+        # Get payment month and year from params (default to current if not provided)
+        payment_year = data.params.get("payment_year")
+        payment_month = data.params.get("payment_month")
 
-        if current_date < contract.start_date:
+        # Convert to int if provided
+        if payment_year is not None:
+            try:
+                payment_year = int(payment_year)
+            except (TypeError, ValueError):
+                return {
+                    "error": -8,
+                    "error_note": "Ошибка в запросе от CLICK"
+                }
+        else:
+            payment_year = datetime.now().year
+
+        if payment_month is not None:
+            try:
+                payment_month = int(payment_month)
+            except (TypeError, ValueError):
+                return {
+                    "error": -8,
+                    "error_note": "Ошибка в запросе от CLICK"
+                }
+        else:
+            payment_month = datetime.now().month
+
+        # Validate month is 1-12
+        if not (1 <= payment_month <= 12):
+            return {
+                "error": -8,
+                "error_note": "Ошибка в запросе от CLICK"
+            }
+
+        # Validate payment month is within contract period
+        from datetime import date as date_class
+        payment_date = date_class(payment_year, payment_month, 1)
+        contract_start_month = date_class(contract.start_date.year, contract.start_date.month, 1)
+        contract_end_month = date_class(contract.end_date.year, contract.end_date.month, 1)
+
+        if payment_date < contract_start_month:
             return {
                 "error": -5,
                 "error_note": f"Договор еще не начался. Начало: {contract.start_date.isoformat()}"
             }
 
-        if current_date > contract.end_date:
+        if payment_date > contract_end_month:
             return {
                 "error": -5,
                 "error_note": f"Договор истек. Окончание: {contract.end_date.isoformat()}"
             }
 
-        # Check for duplicate payment for current month
+        # Check for duplicate payment for specified month
         duplicate_check = await db.execute(
             select(Transaction).where(
                 Transaction.contract_id == contract.id,
                 Transaction.status == PaymentStatus.SUCCESS,
-                Transaction.payment_year == current_year,
-                Transaction.payment_months.op('@>')(cast([current_month], JSONB))
+                Transaction.payment_year == payment_year,
+                Transaction.payment_months.op('@>')(cast([payment_month], JSONB))
             )
         )
         duplicate = duplicate_check.scalar_one_or_none()
@@ -270,7 +305,7 @@ async def click_payment(
             }
             return {
                 "error": -4,
-                "error_note": f"Оплата за {month_names[current_month]} {current_year} уже существует"
+                "error_note": f"Оплата за {month_names[payment_month]} {payment_year} уже существует"
             }
 
         # Check for existing transaction with same click_paydoc_id
@@ -310,9 +345,9 @@ async def click_payment(
             status=PaymentStatus.PENDING,
             contract_id=contract.id,
             student_id=contract.student_id,
-            payment_year=datetime.now().year,
-            payment_months=[],  # Will be set on confirm
-            comment=f"Click prepare: attempt {data.attempt_trans_id}"
+            payment_year=payment_year,
+            payment_months=[payment_month],
+            comment=f"Click prepare: attempt {data.attempt_trans_id}, month {payment_month}/{payment_year}"
         )
 
         db.add(transaction)
@@ -402,13 +437,17 @@ async def click_payment(
                 "error_note": "Абонент не найден"
             }
 
-        # Set payment year and month to current date
-        current_year = datetime.now().year
-        current_month = datetime.now().month
-        current_date = datetime.now().date()
+        # Get payment month and year from the transaction (set during PREPARE)
+        payment_year = transaction.payment_year
+        payment_month = transaction.payment_months[0] if transaction.payment_months else datetime.now().month
 
-        # Validate payment date is still within contract period
-        if current_date < contract.start_date or current_date > contract.end_date:
+        # Validate payment month is still within contract period
+        from datetime import date as date_class
+        payment_date = date_class(payment_year, payment_month, 1)
+        contract_start_month = date_class(contract.start_date.year, contract.start_date.month, 1)
+        contract_end_month = date_class(contract.end_date.year, contract.end_date.month, 1)
+
+        if payment_date < contract_start_month or payment_date > contract_end_month:
             return {
                 "error": -5,
                 "error_note": "Договор истек или еще не начался"
@@ -419,8 +458,9 @@ async def click_payment(
             select(Transaction).where(
                 Transaction.contract_id == contract.id,
                 Transaction.status == PaymentStatus.SUCCESS,
-                Transaction.payment_year == current_year,
-                Transaction.payment_months.op('@>')(cast([current_month], JSONB))
+                Transaction.payment_year == payment_year,
+                Transaction.payment_months.op('@>')(cast([payment_month], JSONB)),
+                Transaction.id != transaction.id  # Exclude current transaction
             )
         )
         final_duplicate = final_duplicate_check.scalar_one_or_none()
@@ -428,19 +468,17 @@ async def click_payment(
         if final_duplicate:
             # Cancel this transaction and return error
             transaction.status = PaymentStatus.CANCELLED
-            transaction.comment = f"Cancelled: duplicate payment for month {current_month}"
+            transaction.comment = f"Cancelled: duplicate payment for month {payment_month}/{payment_year}"
             await db.commit()
             return {
                 "error": -4,
                 "error_note": "Оплата за этот месяц уже существует"
             }
 
-        # Confirm transaction
+        # Confirm transaction (payment_year and payment_months already set in PREPARE)
         transaction.status = PaymentStatus.SUCCESS
         transaction.paid_at = datetime.utcnow()
-        transaction.payment_year = current_year
-        transaction.payment_months = [current_month]
-        transaction.comment = f"Click confirmed: attempt {data.attempt_trans_id}, month {current_month}/{current_year}"
+        transaction.comment = f"Click confirmed: attempt {data.attempt_trans_id}, month {payment_month}/{payment_year}"
 
         await db.commit()
         await db.refresh(transaction)
