@@ -1,54 +1,28 @@
-"""
-Click Payment Integration Test Script
-
-This script tests the Click ADVANCED SHOP API integration.
-Before running, make sure:
-1. FastAPI server is running
-2. Database has at least one ACTIVE contract
-3. .env has CLICK_SERVICE_ID and CLICK_SECRET_KEY configured
-"""
-
 import hashlib
 import requests
 from datetime import datetime
 
 
-# =========================
-# CONFIGURATION
-# =========================
 API_BASE_URL = "http://localhost:8000"
 CLICK_ENDPOINT = f"{API_BASE_URL}/click/payment"
 
-# TODO: Update these with your actual values from .env
-SERVICE_ID = 12345  # Replace with your CLICK_SERVICE_ID
-SECRET_KEY = "your_secret_key_here"  # Replace with your CLICK_SECRET_KEY
+SERVICE_ID = 12345
+SECRET_KEY = "your_secret_key_here"
 
-# Test data - UPDATE THIS with a real contract number from your database
 TEST_CONTRACT_NUMBER = "CONTRACT-2024-001"
 TEST_AMOUNT = 500000.0
 
 
-# =========================
-# HELPER FUNCTIONS
-# =========================
 def md5_hash(value: str) -> str:
-    """Generate MD5 hash"""
     return hashlib.md5(value.encode()).hexdigest()
 
 
 def get_params_iv(params: dict) -> str:
-    """
-    Get paramsIV in fixed order matching Click specification
-    """
-    PARAMS_ORDER = ["contract", "full_name", "service_type", "amount"]
+    PARAMS_ORDER = ["contract", "full_name", "service_type", "amount", "payment_month", "payment_year"]
     return "".join(str(params[k]) for k in PARAMS_ORDER if k in params)
 
 
 def generate_signature(click_paydoc_id, attempt_trans_id, service_id, params, action, sign_time):
-    """
-    Generate Click signature:
-    md5(click_paydoc_id + attempt_trans_id + service_id + SECRET_KEY + paramsIV + action + sign_time)
-    """
     params_iv = get_params_iv(params)
 
     raw = (
@@ -67,14 +41,7 @@ def generate_signature(click_paydoc_id, attempt_trans_id, service_id, params, ac
     return signature
 
 
-# =========================
-# TEST FUNCTIONS
-# =========================
 def test_action_0_getinfo():
-    """
-    Test Action 0: Get contract information
-    No signature required
-    """
     print("\n" + "="*60)
     print("🧪 TEST 1: Action 0 - GETINFO")
     print("="*60)
@@ -111,15 +78,10 @@ def test_action_0_getinfo():
 
 
 def test_action_1_prepare():
-    """
-    Test Action 1: Prepare transaction
-    Signature required
-    """
     print("\n" + "="*60)
     print("🧪 TEST 2: Action 1 - PREPARE")
     print("="*60)
 
-    # Generate test data
     click_paydoc_id = 123456789
     attempt_trans_id = 987654321
     sign_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
@@ -129,7 +91,6 @@ def test_action_1_prepare():
         "amount": TEST_AMOUNT
     }
 
-    # Generate signature
     action = 1
     signature = generate_signature(
         click_paydoc_id,
@@ -175,10 +136,6 @@ def test_action_1_prepare():
 
 
 def test_action_2_confirm(prepare_data):
-    """
-    Test Action 2: Confirm transaction
-    Signature required
-    """
     if not prepare_data:
         print("\n⚠️ SKIPPING TEST 3: No prepare data available")
         return None
@@ -193,10 +150,8 @@ def test_action_2_confirm(prepare_data):
 
     sign_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
-    # For CONFIRM, params can be empty
     params = {}
 
-    # Generate signature
     action = 2
     signature = generate_signature(
         click_paydoc_id,
@@ -246,10 +201,6 @@ def test_action_2_confirm(prepare_data):
 
 
 def test_action_3_check(prepare_data):
-    """
-    Test Action 3: Check transaction status
-    Signature required
-    """
     if not prepare_data:
         print("\n⚠️ SKIPPING TEST 4: No prepare data available")
         return None
@@ -265,7 +216,6 @@ def test_action_3_check(prepare_data):
     sign_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     params = {}
 
-    # Generate signature
     action = 3
     signature = generate_signature(
         click_paydoc_id,
@@ -316,9 +266,6 @@ def test_action_3_check(prepare_data):
         return None
 
 
-# =========================
-# MAIN TEST RUNNER
-# =========================
 def main():
     print("\n" + "="*60)
     print("🚀 CLICK PAYMENT INTEGRATION TEST SUITE")
@@ -329,19 +276,11 @@ def main():
     print(f"💰 Test Amount: {TEST_AMOUNT}")
     print("="*60)
 
-    # Test 1: Getinfo
     getinfo_result = test_action_0_getinfo()
-
-    # Test 2: Prepare
     prepare_result = test_action_1_prepare()
-
-    # Test 3: Confirm (only if prepare succeeded)
     confirm_result = test_action_2_confirm(prepare_result)
-
-    # Test 4: Check status
     check_result = test_action_3_check(prepare_result)
 
-    # Summary
     print("\n" + "="*60)
     print("📊 TEST SUMMARY")
     print("="*60)
