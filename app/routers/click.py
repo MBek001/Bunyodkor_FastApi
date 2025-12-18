@@ -33,6 +33,14 @@ class ClickRequest(BaseModel):
 
 
 # =========================
+# CONSTANTS
+# =========================
+# Click params order for paramsIV calculation
+# CRITICAL: Must match the order Click sends params
+PARAMS_ORDER = ["contract", "full_name", "service_type", "amount"]
+
+
+# =========================
 # HELPERS
 # =========================
 def md5_hash(value: str) -> str:
@@ -42,12 +50,15 @@ def md5_hash(value: str) -> str:
 
 def get_params_iv(params: dict) -> str:
     """
-    Get all values from params dict in order
+    Get all values from params dict in FIXED order
     paramsIV = all values of params object in transmitted order
+
+    CRITICAL: dict.values() order is not guaranteed to match Click's order
+    We must use a fixed order that matches Click's specification
     """
     if not params:
         return ""
-    return "".join(str(value) for value in params.values())
+    return "".join(str(params[k]) for k in PARAMS_ORDER if k in params)
 
 
 def verify_signature(data: ClickRequest) -> bool:
@@ -106,6 +117,15 @@ async def click_payment(
     - 4: Compare - Get reconciliation report (no signature required)
     """
     action = data.action
+
+    # =========================
+    # SECURITY: Validate service_id
+    # =========================
+    if data.service_id != settings.CLICK_SERVICE_ID:
+        return {
+            "error": -3,
+            "error_note": "Action not found"
+        }
 
     # =========================
     # ACTION 0: GETINFO
@@ -177,12 +197,14 @@ async def click_payment(
             }
 
         contract_number = data.params.get("contract")
-        amount = data.params.get("amount")
 
-        if not amount:
+        # Convert amount to float (Click may send it as string)
+        try:
+            amount = float(data.params.get("amount"))
+        except (TypeError, ValueError):
             return {
-                "error": -8,
-                "error_note": "Ошибка в запросе от CLICK"
+                "error": -2,
+                "error_note": "Incorrect parameter amount"
             }
 
         # Find contract
@@ -204,8 +226,8 @@ async def click_payment(
                 "error_note": "Абонент не найден"
             }
 
-        # Validate amount
-        if float(amount) < float(contract.monthly_fee):
+        # Validate amount (amount is already float from try/except above)
+        if amount < float(contract.monthly_fee):
             return {
                 "error": -2,
                 "error_note": f"Неверная сумма оплаты. Минимум: {contract.monthly_fee}"
@@ -292,6 +314,13 @@ async def click_payment(
         transaction = transaction_result.scalar_one_or_none()
 
         if not transaction:
+            return {
+                "error": -6,
+                "error_note": "Транзакция не найдена"
+            }
+
+        # FRAUD PROTECTION: Validate click_paydoc_id matches transaction
+        if transaction.external_id != str(data.click_paydoc_id):
             return {
                 "error": -6,
                 "error_note": "Транзакция не найдена"
@@ -417,6 +446,7 @@ async def click_payment(
                 and_(
                     Transaction.source == PaymentSource.CLICK,
                     Transaction.status == PaymentStatus.SUCCESS,
+                    Transaction.paid_at.is_not(None),
                     Transaction.paid_at >= from_date,
                     Transaction.paid_at < till_date
                 )
