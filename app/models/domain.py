@@ -53,10 +53,11 @@ class Group(Base, TimestampMixin):
 
     id: Mapped[int] = mapped_column(primary_key=True, index=True)
     name: Mapped[str] = mapped_column(String(100), nullable=False)
+    identifier: Mapped[str] = mapped_column(String(10), unique=True, nullable=False, index=True)
     description: Mapped[str | None] = mapped_column(Text, nullable=True)
     schedule_days: Mapped[str | None] = mapped_column(String(255), nullable=True)
     schedule_time: Mapped[str | None] = mapped_column(String(50), nullable=True)
-    capacity: Mapped[int] = mapped_column(Integer, default=100, nullable=False)  # Maximum number of students
+    capacity: Mapped[int] = mapped_column(Integer, default=25, nullable=False)
     status: Mapped[GroupStatus] = mapped_column(
         SAEnum(GroupStatus, native_enum=False, length=20), default=GroupStatus.ACTIVE, nullable=False, index=True
     )
