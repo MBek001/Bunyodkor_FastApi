@@ -5,14 +5,13 @@ class UserStatus(str, Enum):
     ACTIVE = "active"
     INACTIVE = "inactive"
     SUSPENDED = "suspended"
+    DELETED = "deleted"
 
 
 class StudentStatus(str, Enum):
     ACTIVE = "active"
-    GRADUATED = "graduated"
-    DROPPED = "dropped"
-    SUSPENDED = "suspended"
-    ARCHIVED = "archived"  # For yearly archiving
+    DELETED = "deleted"
+    ARCHIVED = "archived"
 
 
 class GroupStatus(str, Enum):
@@ -22,11 +21,10 @@ class GroupStatus(str, Enum):
 
 
 class ContractStatus(str, Enum):
-    PENDING = "pending"
     ACTIVE = "active"
     EXPIRED = "expired"
-    TERMINATED = "terminated"
-    ARCHIVED = "archived"  # For yearly archiving
+    DELETED = "deleted"
+    ARCHIVED = "archived"
 
 
 class PaymentStatus(str, Enum):

@@ -251,7 +251,7 @@ async def get_archive_stats(
     active_students = await db.execute(
         select(func.count(Student.id)).where(
             Student.archive_year == year,
-            Student.status.in_([StudentStatus.ACTIVE, StudentStatus.GRADUATED, StudentStatus.DROPPED])
+            Student.status == StudentStatus.ACTIVE
         )
     )
     active_students_count = active_students.scalar() or 0
@@ -289,14 +289,14 @@ async def get_archive_stats(
     )
     archived_contracts_count = archived_contracts.scalar() or 0
 
-    # Terminated contracts count
-    terminated_contracts = await db.execute(
+    # Deleted contracts count
+    deleted_contracts = await db.execute(
         select(func.count(Contract.id)).where(
             Contract.archive_year == year,
-            Contract.status == ContractStatus.TERMINATED
+            Contract.status == ContractStatus.DELETED
         )
     )
-    terminated_contracts_count = terminated_contracts.scalar() or 0
+    deleted_contracts_count = deleted_contracts.scalar() or 0
 
     return DataResponse(data={
         "year": year,
@@ -310,8 +310,8 @@ async def get_archive_stats(
             "students": archived_students_count,
             "contracts": archived_contracts_count
         },
-        "terminated": {
-            "contracts": terminated_contracts_count
+        "deleted": {
+            "contracts": deleted_contracts_count
         }
     })
 
@@ -323,11 +323,11 @@ async def get_terminated_contracts(
     user: Annotated[User, Depends(get_current_user)],
 ):
     """
-    Get all terminated contracts for a specific year.
+    Get all deleted contracts for a specific year.
 
     **SUPERUSER ONLY**
 
-    Returns detailed information about all contracts that were terminated
+    Returns detailed information about all contracts that were deleted
     (canceled/bekor qilingan) during the specified archive year.
 
     This includes:
@@ -342,7 +342,7 @@ async def get_terminated_contracts(
     if not user.is_super_admin:
         raise HTTPException(
             status_code=403,
-            detail="Only superusers can view terminated contracts"
+            detail="Only superusers can view deleted contracts"
         )
 
     # Validate year
@@ -352,7 +352,7 @@ async def get_terminated_contracts(
             detail=f"Invalid year {year}"
         )
 
-    # Get all terminated contracts for the year with related data
+    # Get all deleted contracts for the year with related data
     result = await db.execute(
         select(Contract)
         .options(
@@ -361,7 +361,7 @@ async def get_terminated_contracts(
         )
         .where(
             Contract.archive_year == year,
-            Contract.status == ContractStatus.TERMINATED
+            Contract.status == ContractStatus.DELETED
         )
         .order_by(Contract.terminated_at.desc())
     )
