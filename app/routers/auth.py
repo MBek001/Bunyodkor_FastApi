@@ -31,6 +31,13 @@ async def login(
             detail="Incorrect phone/email or password",
         )
 
+    # Check if user is deleted or inactive
+    if user.status in [UserStatus.DELETED, UserStatus.INACTIVE]:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Account is not active. Please contact administrator.",
+        )
+
     access_token = create_access_token(data={"sub": str(user.id)})
     return TokenResponse(access_token=access_token)
 

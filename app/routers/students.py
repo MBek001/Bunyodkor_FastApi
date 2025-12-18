@@ -315,7 +315,7 @@ async def get_unpaid_students(
                     month_expected += float(contract.monthly_fee)
                     # Count as active if it was active in any of the target months
                     if contract.status == ContractStatus.ACTIVE or (
-                        contract.status == ContractStatus.TERMINATED and
+                        contract.status == ContractStatus.DELETED and
                         contract.terminated_at and
                         contract.terminated_at.date() >= target_date
                     ):
