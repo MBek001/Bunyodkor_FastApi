@@ -1,7 +1,8 @@
 from typing import Annotated
 from fastapi import APIRouter, Depends
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, and_
+from sqlalchemy import select, and_, cast
+from sqlalchemy.dialects.postgresql import JSONB
 from datetime import datetime
 import hashlib
 from pydantic import BaseModel
@@ -233,6 +234,45 @@ async def click_payment(
                 "error_note": f"Неверная сумма оплаты. Минимум: {contract.monthly_fee}"
             }
 
+        # Validate payment month is within contract period
+        current_date = datetime.now().date()
+        current_year = datetime.now().year
+        current_month = datetime.now().month
+
+        if current_date < contract.start_date:
+            return {
+                "error": -5,
+                "error_note": f"Договор еще не начался. Начало: {contract.start_date.isoformat()}"
+            }
+
+        if current_date > contract.end_date:
+            return {
+                "error": -5,
+                "error_note": f"Договор истек. Окончание: {contract.end_date.isoformat()}"
+            }
+
+        # Check for duplicate payment for current month
+        duplicate_check = await db.execute(
+            select(Transaction).where(
+                Transaction.contract_id == contract.id,
+                Transaction.status == PaymentStatus.SUCCESS,
+                Transaction.payment_year == current_year,
+                Transaction.payment_months.op('@>')(cast([current_month], JSONB))
+            )
+        )
+        duplicate = duplicate_check.scalar_one_or_none()
+
+        if duplicate:
+            month_names = {
+                1: "январь", 2: "февраль", 3: "март", 4: "апрель",
+                5: "май", 6: "июнь", 7: "июль", 8: "август",
+                9: "сентябрь", 10: "октябрь", 11: "ноябрь", 12: "декабрь"
+            }
+            return {
+                "error": -4,
+                "error_note": f"Оплата за {month_names[current_month]} {current_year} уже существует"
+            }
+
         # Check for existing transaction with same click_paydoc_id
         existing_result = await db.execute(
             select(Transaction).where(
@@ -343,14 +383,64 @@ async def click_payment(
                 "error_note": "Транзакция отменена"
             }
 
+        # Get contract to verify it's still valid
+        contract_result = await db.execute(
+            select(Contract).where(Contract.id == transaction.contract_id)
+        )
+        contract = contract_result.scalar_one_or_none()
+
+        if not contract:
+            return {
+                "error": -6,
+                "error_note": "Транзакция не найдена"
+            }
+
+        # Final validation: Check contract is still ACTIVE
+        if contract.status != ContractStatus.ACTIVE:
+            return {
+                "error": -5,
+                "error_note": "Абонент не найден"
+            }
+
+        # Set payment year and month to current date
+        current_year = datetime.now().year
+        current_month = datetime.now().month
+        current_date = datetime.now().date()
+
+        # Validate payment date is still within contract period
+        if current_date < contract.start_date or current_date > contract.end_date:
+            return {
+                "error": -5,
+                "error_note": "Договор истек или еще не начался"
+            }
+
+        # Final check: Ensure no duplicate payment was created between PREPARE and CONFIRM
+        final_duplicate_check = await db.execute(
+            select(Transaction).where(
+                Transaction.contract_id == contract.id,
+                Transaction.status == PaymentStatus.SUCCESS,
+                Transaction.payment_year == current_year,
+                Transaction.payment_months.op('@>')(cast([current_month], JSONB))
+            )
+        )
+        final_duplicate = final_duplicate_check.scalar_one_or_none()
+
+        if final_duplicate:
+            # Cancel this transaction and return error
+            transaction.status = PaymentStatus.CANCELLED
+            transaction.comment = f"Cancelled: duplicate payment for month {current_month}"
+            await db.commit()
+            return {
+                "error": -4,
+                "error_note": "Оплата за этот месяц уже существует"
+            }
+
         # Confirm transaction
         transaction.status = PaymentStatus.SUCCESS
         transaction.paid_at = datetime.utcnow()
-        transaction.comment = f"Click confirmed: attempt {data.attempt_trans_id}"
-
-        # Set payment month to current month
-        current_month = datetime.now().month
+        transaction.payment_year = current_year
         transaction.payment_months = [current_month]
+        transaction.comment = f"Click confirmed: attempt {data.attempt_trans_id}, month {current_month}/{current_year}"
 
         await db.commit()
         await db.refresh(transaction)
