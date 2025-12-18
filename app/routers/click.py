@@ -1,7 +1,7 @@
 from typing import Annotated
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select
+from sqlalchemy import select, and_
 from datetime import datetime
 import hashlib
 from pydantic import BaseModel
@@ -18,26 +18,18 @@ router = APIRouter(prefix="/click", tags=["Click Payment"])
 # =========================
 # PYDANTIC SCHEMAS
 # =========================
-class ClickParams(BaseModel):
-    contract: str
-    amount: float | None = None
-
-
 class ClickRequest(BaseModel):
-    click_paydoc_id: int
+    action: int
+    click_paydoc_id: int | None = None
     attempt_trans_id: int | None = None
     service_id: int
-    click_trans_id: int | None = None
-    merchant_trans_id: str | None = None
     merchant_prepare_id: int | None = None
     merchant_confirm_id: int | None = None
-    amount: float
-    action: int
-    error: int | None = None
-    error_note: str | None = None
-    sign_time: str
-    sign_string: str
-    params: dict
+    sign_time: str | None = None
+    sign_string: str | None = None
+    params: dict | None = None
+    from_date: str | None = None
+    till_date: str | None = None
 
 
 # =========================
@@ -48,42 +40,46 @@ def md5_hash(value: str) -> str:
     return hashlib.md5(value.encode()).hexdigest()
 
 
-def verify_signature(data: ClickRequest, action: int) -> bool:
+def get_params_iv(params: dict) -> str:
     """
-    Verify Click signature according to documentation:
+    Get all values from params dict in order
+    paramsIV = all values of params object in transmitted order
+    """
+    if not params:
+        return ""
+    return "".join(str(value) for value in params.values())
+
+
+def verify_signature(data: ClickRequest) -> bool:
+    """
+    Verify Click signature according to ADVANCED SHOP documentation:
     md5(
         click_paydoc_id +
         attempt_trans_id +
         service_id +
         SECRET_KEY +
-        merchant_trans_id +
-        merchant_prepare_id +
-        amount +
+        paramsIV +
         action +
         sign_time
     )
+    paramsIV = all values from params dict in transmitted order
     """
-    # Get values from request
-    click_paydoc_id = str(data.click_paydoc_id)
+    click_paydoc_id = str(data.click_paydoc_id or "")
     attempt_trans_id = str(data.attempt_trans_id or "")
     service_id = str(data.service_id)
     secret_key = settings.CLICK_SECRET_KEY
-    merchant_trans_id = str(data.merchant_trans_id or "")
-    merchant_prepare_id = str(data.merchant_prepare_id or "")
-    amount = str(data.amount)
-    action_str = str(action)
-    sign_time = str(data.sign_time)
+    params_iv = get_params_iv(data.params or {})
+    action = str(data.action)
+    sign_time = str(data.sign_time or "")
 
-    # Build raw string
+    # Build raw string according to documentation
     raw = (
         f"{click_paydoc_id}"
         f"{attempt_trans_id}"
         f"{service_id}"
         f"{secret_key}"
-        f"{merchant_trans_id}"
-        f"{merchant_prepare_id}"
-        f"{amount}"
-        f"{action_str}"
+        f"{params_iv}"
+        f"{action}"
         f"{sign_time}"
     )
 
@@ -100,45 +96,40 @@ async def click_payment(
     db: Annotated[AsyncSession, Depends(get_db)],
 ):
     """
-    Click payment webhook endpoint.
+    Click payment webhook endpoint - ADVANCED SHOP API
 
     Actions:
-    - 0: Get information about contract
-    - 1: Prepare transaction (create pending)
-    - 2: Confirm transaction (mark as success)
+    - 0: Getinfo - Get information about contract (optional, no signature required)
+    - 1: Prepare - Create transaction and get payment details (signature required)
+    - 2: Confirm - Confirm transaction (signature required)
+    - 3: Check - Check transaction status (signature required)
+    - 4: Compare - Get reconciliation report (no signature required)
     """
     action = data.action
 
     # =========================
-    # 1️⃣ GET INFO (action = 0)
+    # ACTION 0: GETINFO
     # =========================
     if action == 0:
-        contract_number = data.params.get("contract")
-
-        if not contract_number:
+        # No signature verification for Getinfo
+        if not data.params or "contract" not in data.params:
             return {
-                "error": -5,
-                "error_note": "Contract number not provided"
+                "error": -8,
+                "error_note": "Ошибка в запросе от CLICK"
             }
+
+        contract_number = data.params.get("contract")
 
         # Find contract
         contract_result = await db.execute(
-            select(Contract)
-            .where(Contract.contract_number == contract_number)
+            select(Contract).where(Contract.contract_number == contract_number)
         )
         contract = contract_result.scalar_one_or_none()
 
         if not contract:
             return {
                 "error": -5,
-                "error_note": "Contract not found"
-            }
-
-        # Check if contract is active
-        if contract.status != ContractStatus.ACTIVE:
-            return {
-                "error": -9,
-                "error_note": f"Contract is not active (status: {contract.status.value})"
+                "error_note": "Абонент не найден"
             }
 
         # Get student info
@@ -150,16 +141,17 @@ async def click_payment(
         if not student:
             return {
                 "error": -5,
-                "error_note": "Student not found"
+                "error_note": "Абонент не найден"
             }
 
         return {
             "error": 0,
-            "error_note": "Success",
+            "error_note": "Успешно",
             "params": {
                 "contract": contract.contract_number,
                 "full_name": f"{student.first_name} {student.last_name}",
                 "phone": student.phone or "",
+                "address": student.address or "",
                 "monthly_fee": float(contract.monthly_fee),
                 "contract_status": contract.status.value,
                 "start_date": contract.start_date.isoformat(),
@@ -168,50 +160,55 @@ async def click_payment(
         }
 
     # =========================
-    # 2️⃣ PREPARE (action = 1)
+    # ACTION 1: PREPARE
     # =========================
     elif action == 1:
         # Verify signature
-        if not verify_signature(data, action):
+        if not verify_signature(data):
             return {
                 "error": -1,
-                "error_note": "SIGN CHECK FAILED"
+                "error_note": "SIGN CHECK FAILED!"
+            }
+
+        if not data.params or "contract" not in data.params:
+            return {
+                "error": -8,
+                "error_note": "Ошибка в запросе от CLICK"
             }
 
         contract_number = data.params.get("contract")
-        amount = data.amount
+        amount = data.params.get("amount")
 
-        if not contract_number:
+        if not amount:
             return {
-                "error": -5,
-                "error_note": "Contract number not provided"
+                "error": -8,
+                "error_note": "Ошибка в запросе от CLICK"
             }
 
         # Find contract
         contract_result = await db.execute(
-            select(Contract)
-            .where(Contract.contract_number == contract_number)
+            select(Contract).where(Contract.contract_number == contract_number)
         )
         contract = contract_result.scalar_one_or_none()
 
         if not contract:
             return {
                 "error": -5,
-                "error_note": "Contract not found"
+                "error_note": "Абонент не найден"
             }
 
         # Check if contract is active
         if contract.status != ContractStatus.ACTIVE:
             return {
-                "error": -9,
-                "error_note": f"Contract is not active (status: {contract.status.value})"
+                "error": -5,
+                "error_note": "Абонент не найден"
             }
 
-        # Validate amount (should be at least monthly fee)
-        if amount < float(contract.monthly_fee):
+        # Validate amount
+        if float(amount) < float(contract.monthly_fee):
             return {
                 "error": -2,
-                "error_note": f"Amount too small. Minimum: {contract.monthly_fee}"
+                "error_note": f"Неверная сумма оплаты. Минимум: {contract.monthly_fee}"
             }
 
         # Check for existing transaction with same click_paydoc_id
@@ -226,7 +223,12 @@ async def click_payment(
             if existing.status == PaymentStatus.SUCCESS:
                 return {
                     "error": -4,
-                    "error_note": "Already paid"
+                    "error_note": "Уже оплачен"
+                }
+            if existing.status == PaymentStatus.CANCELLED:
+                return {
+                    "error": -9,
+                    "error_note": "Транзакция отменена"
                 }
             # Return existing prepare
             return {
@@ -234,7 +236,8 @@ async def click_payment(
                 "attempt_trans_id": data.attempt_trans_id,
                 "merchant_prepare_id": existing.id,
                 "error": 0,
-                "error_note": "Success"
+                "error_note": "Успешно",
+                "params": {}
             }
 
         # Create new pending transaction
@@ -247,7 +250,7 @@ async def click_payment(
             student_id=contract.student_id,
             payment_year=datetime.now().year,
             payment_months=[],  # Will be set on confirm
-            comment=f"Click payment attempt: {data.attempt_trans_id}"
+            comment=f"Click prepare: attempt {data.attempt_trans_id}"
         )
 
         db.add(transaction)
@@ -259,26 +262,27 @@ async def click_payment(
             "attempt_trans_id": data.attempt_trans_id,
             "merchant_prepare_id": transaction.id,
             "error": 0,
-            "error_note": "Success"
+            "error_note": "Успешно",
+            "params": {}
         }
 
     # =========================
-    # 3️⃣ CONFIRM (action = 2)
+    # ACTION 2: CONFIRM
     # =========================
     elif action == 2:
         # Verify signature
-        if not verify_signature(data, action):
+        if not verify_signature(data):
             return {
                 "error": -1,
-                "error_note": "SIGN CHECK FAILED"
+                "error_note": "SIGN CHECK FAILED!"
             }
 
         merchant_prepare_id = data.merchant_prepare_id
 
         if not merchant_prepare_id:
             return {
-                "error": -6,
-                "error_note": "merchant_prepare_id not provided"
+                "error": -8,
+                "error_note": "Ошибка в запросе от CLICK"
             }
 
         # Find transaction
@@ -290,7 +294,7 @@ async def click_payment(
         if not transaction:
             return {
                 "error": -6,
-                "error_note": "Transaction not found"
+                "error_note": "Транзакция не найдена"
             }
 
         # Check if already confirmed
@@ -300,23 +304,22 @@ async def click_payment(
                 "attempt_trans_id": data.attempt_trans_id,
                 "merchant_confirm_id": transaction.id,
                 "error": -4,
-                "error_note": "Already confirmed"
+                "error_note": "Уже оплачен"
             }
 
         # Check if cancelled
         if transaction.status == PaymentStatus.CANCELLED:
             return {
                 "error": -9,
-                "error_note": "Transaction was cancelled"
+                "error_note": "Транзакция отменена"
             }
 
         # Confirm transaction
         transaction.status = PaymentStatus.SUCCESS
         transaction.paid_at = datetime.utcnow()
+        transaction.comment = f"Click confirmed: attempt {data.attempt_trans_id}"
 
-        # Calculate payment months based on amount and monthly fee
-        # For now, we'll need the client to specify which months
-        # or we can set to current month
+        # Set payment month to current month
         current_month = datetime.now().month
         transaction.payment_months = [current_month]
 
@@ -328,14 +331,129 @@ async def click_payment(
             "attempt_trans_id": data.attempt_trans_id,
             "merchant_confirm_id": transaction.id,
             "error": 0,
-            "error_note": "Success"
+            "error_note": "Успешно",
+            "params": {}
         }
 
     # =========================
-    # ❌ UNKNOWN ACTION
+    # ACTION 3: CHECK
+    # =========================
+    elif action == 3:
+        # Verify signature
+        if not verify_signature(data):
+            return {
+                "error": -1,
+                "error_note": "SIGN CHECK FAILED!"
+            }
+
+        merchant_prepare_id = data.merchant_prepare_id
+
+        if not merchant_prepare_id:
+            return {
+                "error": -8,
+                "error_note": "Ошибка в запросе от CLICK"
+            }
+
+        # Find transaction
+        transaction_result = await db.execute(
+            select(Transaction).where(Transaction.id == merchant_prepare_id)
+        )
+        transaction = transaction_result.scalar_one_or_none()
+
+        if not transaction:
+            return {
+                "error": -6,
+                "error_note": "Транзакция не найдена"
+            }
+
+        # Determine status
+        # 0 – запрос еще не обрабатывался (Click попробует допровести платеж)
+        # 1 – была неуспешная попытка обработки запроса (Сlick отменит платеж)
+        # 2 – запрос успешно обработан (Click отметит платеж успешным)
+
+        if transaction.status == PaymentStatus.SUCCESS:
+            status = 2
+        elif transaction.status == PaymentStatus.CANCELLED or transaction.status == PaymentStatus.FAILED:
+            status = 1
+        else:  # PENDING or UNASSIGNED
+            status = 0
+
+        return {
+            "click_paydoc_id": data.click_paydoc_id,
+            "attempt_trans_id": data.attempt_trans_id,
+            "error": 0,
+            "error_note": "Успешно",
+            "status": status,
+            "params": {}
+        }
+
+    # =========================
+    # ACTION 4: COMPARE
+    # =========================
+    elif action == 4:
+        # No signature verification for Compare
+        from_date_str = data.from_date
+        till_date_str = data.till_date
+
+        if not from_date_str or not till_date_str:
+            return {
+                "error": -8,
+                "error_note": "Ошибка в запросе от CLICK"
+            }
+
+        try:
+            # Parse dates
+            from_date = datetime.strptime(from_date_str, "%Y-%m-%d %H:%M:%S")
+            till_date = datetime.strptime(till_date_str, "%Y-%m-%d %H:%M:%S")
+        except ValueError:
+            return {
+                "error": -8,
+                "error_note": "Ошибка в запросе от CLICK"
+            }
+
+        # Get all successful Click transactions in the date range
+        transactions_result = await db.execute(
+            select(Transaction).where(
+                and_(
+                    Transaction.source == PaymentSource.CLICK,
+                    Transaction.status == PaymentStatus.SUCCESS,
+                    Transaction.paid_at >= from_date,
+                    Transaction.paid_at < till_date
+                )
+            )
+        )
+        transactions = transactions_result.scalars().all()
+
+        # Build requests object
+        requests = {}
+        for transaction in transactions:
+            if transaction.external_id:
+                # Get contract
+                contract_result = await db.execute(
+                    select(Contract).where(Contract.id == transaction.contract_id)
+                )
+                contract = contract_result.scalar_one_or_none()
+
+                if contract:
+                    requests[transaction.external_id] = {
+                        "click_paydoc_id": int(transaction.external_id),
+                        "params": {
+                            "contract": contract.contract_number,
+                            "amount": float(transaction.amount)
+                        }
+                    }
+
+        return {
+            "error": 0,
+            "error_note": "Успешно",
+            "requests": requests
+        }
+
+    # =========================
+    # UNKNOWN ACTION
     # =========================
     else:
         return {
             "error": -3,
-            "error_note": "Action not found"
+            "error_note": "Действие не найдено"
         }
