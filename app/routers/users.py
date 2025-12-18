@@ -206,6 +206,11 @@ async def delete_user(
     user_id: int,
     db: Annotated[AsyncSession, Depends(get_db)],
 ):
+    """
+    Soft delete a user by setting their status to DELETED.
+    The user is not actually removed from the database.
+    Super admin users cannot be deleted.
+    """
     result = await db.execute(select(User).where(User.id == user_id))
     user = result.scalar_one_or_none()
 
@@ -215,7 +220,8 @@ async def delete_user(
     if user.is_super_admin:
         raise HTTPException(status_code=400, detail="Cannot delete super admin user")
 
-    await db.delete(user)
+    # Soft delete: set status to DELETED instead of actually deleting
+    user.status = UserStatus.DELETED
     await db.commit()
 
     return DataResponse(data={"message": "User deleted successfully"})
@@ -226,7 +232,11 @@ async def bulk_delete_users(
     user_ids: list[int],
     db: Annotated[AsyncSession, Depends(get_db)],
 ):
-    """Bulk delete multiple users by their IDs"""
+    """
+    Soft delete multiple users by setting their status to DELETED.
+    Users are not actually removed from the database.
+    Super admin users cannot be deleted.
+    """
     if not user_ids:
         raise HTTPException(status_code=400, detail="No user IDs provided")
 
@@ -246,7 +256,8 @@ async def bulk_delete_users(
                 errors.append({"user_id": user_id, "error": "Cannot delete super admin user"})
                 continue
 
-            await db.delete(user)
+            # Soft delete: set status to DELETED instead of actually deleting
+            user.status = UserStatus.DELETED
             deleted_count += 1
         except Exception as e:
             errors.append({"user_id": user_id, "error": str(e)})

@@ -293,13 +293,18 @@ async def delete_contract(
     contract_id: int,
     db: Annotated[AsyncSession, Depends(get_db)],
 ):
+    """
+    Soft delete a contract by setting its status to DELETED.
+    The contract is not actually removed from the database.
+    """
     result = await db.execute(select(Contract).where(Contract.id == contract_id))
     contract = result.scalar_one_or_none()
 
     if not contract:
         raise HTTPException(status_code=404, detail="Contract not found")
 
-    await db.delete(contract)
+    # Soft delete: set status to DELETED instead of actually deleting
+    contract.status = ContractStatus.DELETED
     await db.commit()
 
     return DataResponse(data={"message": "Contract deleted successfully"})
@@ -310,7 +315,10 @@ async def bulk_delete_contracts(
     contract_ids: list[int],
     db: Annotated[AsyncSession, Depends(get_db)],
 ):
-    """Bulk delete multiple contracts by their IDs"""
+    """
+    Soft delete multiple contracts by setting their status to DELETED.
+    Contracts are not actually removed from the database.
+    """
     if not contract_ids:
         raise HTTPException(status_code=400, detail="No contract IDs provided")
 
@@ -326,7 +334,8 @@ async def bulk_delete_contracts(
                 errors.append({"contract_id": contract_id, "error": "Contract not found"})
                 continue
 
-            await db.delete(contract)
+            # Soft delete: set status to DELETED instead of actually deleting
+            contract.status = ContractStatus.DELETED
             deleted_count += 1
         except Exception as e:
             errors.append({"contract_id": contract_id, "error": str(e)})

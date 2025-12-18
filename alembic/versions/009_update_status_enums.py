@@ -23,6 +23,9 @@ def upgrade() -> None:
     # Add DELETED to ContractStatus
     op.execute("ALTER TYPE contractstatus ADD VALUE IF NOT EXISTS 'deleted'")
 
+    # Add DELETED to GroupStatus
+    op.execute("ALTER TYPE groupstatus ADD VALUE IF NOT EXISTS 'deleted'")
+
     # Update existing GRADUATED students to ARCHIVED
     op.execute("UPDATE students SET status = 'archived' WHERE status = 'graduated'")
 
