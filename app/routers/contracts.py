@@ -409,15 +409,32 @@ async def create_contract_with_file_upload(
     if existing_contract.scalar_one_or_none():
         raise HTTPException(status_code=400, detail="Contract number already exists")
 
-    # Parse contract number to get sequence
-    if contract_number.startswith("N") and contract_number.endswith(str(birth_year)):
-        seq_str = contract_number[1:-len(str(birth_year))]
-        try:
-            sequence_number = int(seq_str)
-        except ValueError:
-            raise HTTPException(status_code=400, detail="Invalid contract number format")
-    else:
-        raise HTTPException(status_code=400, detail="Invalid contract number format (must be N{seq}{year})")
+    # Parse contract number: N{identifier}{seq}{year}
+    import re
+    if not contract_number.startswith("N"):
+        raise HTTPException(status_code=400, detail="Contract number must start with 'N'")
+
+    # Extract year (last 4 digits)
+    if not contract_number.endswith(str(birth_year)):
+        raise HTTPException(status_code=400, detail=f"Contract number must end with birth year {birth_year}")
+
+    # Extract middle part (identifier + sequence)
+    middle = contract_number[1:-len(str(birth_year))]
+
+    # Try to match pattern: identifier (letters/numbers) + sequence (numbers only)
+    match = re.match(r'^(.+?)(\d+)$', middle)
+    if not match:
+        raise HTTPException(status_code=400, detail="Invalid contract number format (must be N{identifier}{seq}{year})")
+
+    extracted_identifier = match.group(1)
+    sequence_number = int(match.group(2))
+
+    # Verify identifier matches group
+    if extracted_identifier != group.identifier:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Contract number identifier '{extracted_identifier}' doesn't match group identifier '{group.identifier}'"
+        )
 
     # Upload images to S3
     try:
@@ -552,14 +569,15 @@ async def get_next_available_number(
 
     # Get the first (lowest) available number
     next_seq = available_numbers[0]
-    contract_number = f"N{next_seq}{birth_year}"
+    contract_number = f"N{group.identifier}{next_seq}{birth_year}"
 
     return DataResponse(data={
         "next_number": next_seq,
         "contract_number": contract_number,
-        "message": f"Next available number for group '{group.name}'",
+        "message": f"Next available number for group '{group.name}' ({group.identifier})",
         "is_full": False,
         "group_name": group.name,
+        "group_identifier": group.identifier,
         "birth_year": birth_year,
         "group_capacity": group.capacity,
         "total_used": group.capacity - len(available_numbers)
