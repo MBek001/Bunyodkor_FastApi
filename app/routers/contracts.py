@@ -4,7 +4,7 @@ import json
 import uuid
 import os
 from fastapi import APIRouter, Depends, HTTPException, Query, UploadFile, File, Form
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, JSONResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, func, and_, or_
 from sqlalchemy.orm import selectinload
@@ -12,15 +12,17 @@ from app.core.db import get_db
 from app.core.permissions import PERM_CONTRACTS_VIEW, PERM_CONTRACTS_EDIT
 from app.core.s3 import upload_image_to_s3
 from app.models.domain import Contract, Student, Group, WaitingList
+from app.models.finance import Transaction
 from app.schemas.contract import (
     ContractRead, ContractUpdate, ContractTerminate,
     ContractCreateWithDocuments, ContractCreatedResponse,
     ContractNumberInfo, ContractCustomFields
 )
+from app.schemas.transaction import ContractPaymentStatus, PaidMonth, UnpaidMonth
 from app.schemas.common import DataResponse, PaginationMeta
 from app.deps import require_permission, CurrentUser
 from app.models.auth import User
-from app.models.enums import ContractStatus
+from app.models.enums import ContractStatus, PaymentStatus
 from app.services.contract_allocation import (
     get_available_contract_numbers,
     is_group_full,
@@ -638,3 +640,219 @@ async def get_contract_pdf_url(
 
     # Return JSON with the S3 URL
     return JSONResponse(content={"pdf_url": contract.final_pdf_url})
+
+
+@router.get("/{contract_number}/payment-status", response_model=DataResponse[ContractPaymentStatus], dependencies=[Depends(require_permission(PERM_CONTRACTS_VIEW))])
+async def get_contract_payment_status(
+    contract_number: str,
+    db: Annotated[AsyncSession, Depends(get_db)],
+):
+    """
+    Get payment status for a contract - shows paid and unpaid months.
+
+    Returns:
+    - Contract details
+    - List of paid months with transaction details
+    - List of unpaid months with expected amounts
+    - Total paid, unpaid, and expected amounts
+
+    Example:
+        GET /contracts/N1B12020/payment-status
+    """
+    from datetime import date as date_class
+    from sqlalchemy.dialects.postgresql import JSONB
+    from sqlalchemy import cast
+
+    # Find contract
+    result = await db.execute(
+        select(Contract).options(selectinload(Contract.student)).where(
+            Contract.contract_number == contract_number
+        )
+    )
+    contract = result.scalar_one_or_none()
+
+    if not contract:
+        raise HTTPException(
+            status_code=404,
+            detail=f"Contract {contract_number} not found"
+        )
+
+    # Get student
+    if not contract.student:
+        raise HTTPException(
+            status_code=404,
+            detail=f"Student not found for contract {contract_number}"
+        )
+
+    student = contract.student
+
+    # Calculate all months in contract period
+    contract_start_month = date_class(contract.start_date.year, contract.start_date.month, 1)
+    contract_end_month = date_class(contract.end_date.year, contract.end_date.month, 1)
+
+    # Generate list of all months in contract period
+    all_months = []
+    current_month = contract_start_month
+    while current_month <= contract_end_month:
+        all_months.append((current_month.year, current_month.month))
+        # Move to next month
+        if current_month.month == 12:
+            current_month = date_class(current_month.year + 1, 1, 1)
+        else:
+            current_month = date_class(current_month.year, current_month.month + 1, 1)
+
+    # Get all successful transactions for this contract
+    transactions_result = await db.execute(
+        select(Transaction).where(
+            Transaction.contract_id == contract.id,
+            Transaction.status == PaymentStatus.SUCCESS
+        ).order_by(Transaction.payment_year, Transaction.paid_at)
+    )
+    transactions = transactions_result.scalars().all()
+
+    # Build a set of paid (year, month) tuples and map to transaction details
+    paid_months_map = {}
+    for transaction in transactions:
+        if transaction.payment_months:
+            for month in transaction.payment_months:
+                key = (transaction.payment_year, month)
+                # If multiple payments for same month, keep the first one
+                if key not in paid_months_map:
+                    paid_months_map[key] = {
+                        "year": transaction.payment_year,
+                        "month": month,
+                        "amount": float(transaction.amount),
+                        "paid_at": transaction.paid_at,
+                        "source": transaction.source,
+                        "transaction_id": transaction.id
+                    }
+
+    # Separate paid and unpaid months
+    paid_months = []
+    unpaid_months = []
+
+    for year, month in all_months:
+        if (year, month) in paid_months_map:
+            paid_months.append(PaidMonth(**paid_months_map[(year, month)]))
+        else:
+            unpaid_months.append(UnpaidMonth(
+                year=year,
+                month=month,
+                expected_amount=float(contract.monthly_fee)
+            ))
+
+    # Calculate totals
+    total_paid = sum(pm.amount for pm in paid_months)
+    total_unpaid = sum(um.expected_amount for um in unpaid_months)
+    total_expected = len(all_months) * float(contract.monthly_fee)
+
+    return DataResponse(data=ContractPaymentStatus(
+        contract_number=contract.contract_number,
+        student_name=f"{student.first_name} {student.last_name}",
+        start_date=contract.start_date.isoformat(),
+        end_date=contract.end_date.isoformat(),
+        monthly_fee=float(contract.monthly_fee),
+        contract_status=contract.status.value,
+        paid_months=paid_months,
+        unpaid_months=unpaid_months,
+        total_paid=total_paid,
+        total_unpaid=total_unpaid,
+        total_expected=total_expected
+    ))
+
+
+@router.get("/{contract_number}/student-data", dependencies=[Depends(require_permission(PERM_CONTRACTS_VIEW))])
+async def get_contract_student_data(
+    contract_number: str,
+    db: Annotated[AsyncSession, Depends(get_db)],
+):
+    """
+    Get student data from an old contract for creating a new year contract.
+
+    This endpoint is useful when creating a new contract for a student who had
+    a contract in a previous year. It returns all student information from the
+    old contract, including photos, so it can be used to pre-fill the new contract form.
+
+    Returns:
+    - Student personal information
+    - Parent information
+    - Document photos (passport, form 086, etc.)
+    - Old contract details
+
+    Example:
+        GET /contracts/N1B12020/student-data
+    """
+    # Find contract with related student and parent data
+    result = await db.execute(
+        select(Contract).options(
+            selectinload(Contract.student).selectinload(Student.parents)
+        ).where(
+            Contract.contract_number == contract_number
+        )
+    )
+    contract = result.scalar_one_or_none()
+
+    if not contract:
+        raise HTTPException(
+            status_code=404,
+            detail=f"Contract {contract_number} not found"
+        )
+
+    if not contract.student:
+        raise HTTPException(
+            status_code=404,
+            detail=f"Student not found for contract {contract_number}"
+        )
+
+    student = contract.student
+
+    # Parse photo URLs from JSON strings
+    def parse_photo_urls(url_json: str | None) -> list[str]:
+        if not url_json:
+            return []
+        try:
+            urls = json.loads(url_json)
+            return urls if isinstance(urls, list) else [urls]
+        except (json.JSONDecodeError, TypeError):
+            return [url_json] if url_json else []
+
+    # Build response with all student data
+    student_data = {
+        "student": {
+            "id": student.id,
+            "first_name": student.first_name,
+            "last_name": student.last_name,
+            "date_of_birth": student.date_of_birth.isoformat(),
+            "phone": student.phone,
+            "address": student.address,
+            "photo_url": student.photo_url,
+            "status": student.status.value if student.status else None,
+        },
+        "parents": [
+            {
+                "id": parent.id,
+                "first_name": parent.first_name,
+                "last_name": parent.last_name,
+                "phone": parent.phone,
+                "email": parent.email,
+                "relationship_type": parent.relationship_type
+            }
+            for parent in student.parents
+        ],
+        "old_contract": {
+            "contract_number": contract.contract_number,
+            "start_date": contract.start_date.isoformat(),
+            "end_date": contract.end_date.isoformat(),
+            "monthly_fee": float(contract.monthly_fee),
+            "status": contract.status.value,
+            "archive_year": contract.archive_year,
+            "birth_year": contract.birth_year,
+        },
+        "documents": {
+            "passport_copies": parse_photo_urls(contract.passport_copy_url),
+            "form_086": parse_photo_urls(contract.form_086_url),
+            "other_documents": parse_photo_urls(contract.other_documents_url) if hasattr(contract, 'other_documents_url') else []
+        }
+    }
+
+    return JSONResponse(content=student_data)

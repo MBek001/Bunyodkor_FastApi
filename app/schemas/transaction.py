@@ -52,3 +52,32 @@ class ManualTransactionCreate(BaseModel):
     payment_months: list[int]  # List of months (1-12) this payment covers
     comment: Optional[str] = None
     paid_at: Optional[datetime] = None
+
+
+class PaidMonth(BaseModel):
+    year: int
+    month: int
+    amount: float
+    paid_at: Optional[datetime] = None
+    source: PaymentSource
+    transaction_id: int
+
+
+class UnpaidMonth(BaseModel):
+    year: int
+    month: int
+    expected_amount: float
+
+
+class ContractPaymentStatus(BaseModel):
+    contract_number: str
+    student_name: str
+    start_date: str
+    end_date: str
+    monthly_fee: float
+    contract_status: str
+    paid_months: list[PaidMonth]
+    unpaid_months: list[UnpaidMonth]
+    total_paid: float
+    total_unpaid: float
+    total_expected: float
