@@ -1,6 +1,7 @@
 import hashlib
 import requests
 from datetime import datetime
+import sys
 
 
 API_BASE_URL = "http://localhost:8000"
@@ -9,8 +10,11 @@ CLICK_ENDPOINT = f"{API_BASE_URL}/click/payment"
 SERVICE_ID = 12345
 SECRET_KEY = "your_secret_key_here"
 
-TEST_CONTRACT_NUMBER = "CONTRACT-2024-001"
-TEST_AMOUNT = 500000.0
+# These will be set by user input
+TEST_CONTRACT_NUMBER = None
+TEST_AMOUNT = None
+TEST_PAYMENT_YEAR = None
+TEST_PAYMENT_MONTH = None
 
 
 def md5_hash(value: str) -> str:
@@ -88,7 +92,9 @@ def test_action_1_prepare():
 
     params = {
         "contract": TEST_CONTRACT_NUMBER,
-        "amount": TEST_AMOUNT
+        "amount": TEST_AMOUNT,
+        "payment_month": TEST_PAYMENT_MONTH,
+        "payment_year": TEST_PAYMENT_YEAR
     }
 
     action = 1
@@ -266,6 +272,45 @@ def test_action_3_check(prepare_data):
         return None
 
 
+def get_user_input():
+    """Get test parameters from user"""
+    global TEST_CONTRACT_NUMBER, TEST_AMOUNT, TEST_PAYMENT_YEAR, TEST_PAYMENT_MONTH
+
+    print("\n" + "="*60)
+    print("📝 ENTER TEST PARAMETERS")
+    print("="*60)
+
+    # Contract number
+    TEST_CONTRACT_NUMBER = input("📄 Contract Number (e.g., N1C22020): ").strip()
+    if not TEST_CONTRACT_NUMBER:
+        print("❌ Contract number is required!")
+        sys.exit(1)
+
+    # Amount
+    amount_input = input("💰 Amount (default: 600000): ").strip()
+    TEST_AMOUNT = float(amount_input) if amount_input else 600000.0
+
+    # Payment year
+    year_input = input("📅 Payment Year (default: current year): ").strip()
+    TEST_PAYMENT_YEAR = int(year_input) if year_input else datetime.now().year
+
+    # Payment month
+    month_input = input("📅 Payment Month (1-12, default: current month): ").strip()
+    TEST_PAYMENT_MONTH = int(month_input) if month_input else datetime.now().month
+
+    # Validate month
+    if not (1 <= TEST_PAYMENT_MONTH <= 12):
+        print("❌ Month must be between 1 and 12!")
+        sys.exit(1)
+
+    print("\n✅ Test parameters set:")
+    print(f"   Contract: {TEST_CONTRACT_NUMBER}")
+    print(f"   Amount: {TEST_AMOUNT}")
+    print(f"   Payment Month/Year: {TEST_PAYMENT_MONTH}/{TEST_PAYMENT_YEAR}")
+    print("="*60)
+    input("\n✅ Press ENTER to start tests...")
+
+
 def main():
     print("\n" + "="*60)
     print("🚀 CLICK PAYMENT INTEGRATION TEST SUITE")
@@ -274,6 +319,7 @@ def main():
     print(f"🔑 Service ID: {SERVICE_ID}")
     print(f"📄 Test Contract: {TEST_CONTRACT_NUMBER}")
     print(f"💰 Test Amount: {TEST_AMOUNT}")
+    print(f"📅 Payment: {TEST_PAYMENT_MONTH}/{TEST_PAYMENT_YEAR}")
     print("="*60)
 
     getinfo_result = test_action_0_getinfo()
@@ -303,9 +349,11 @@ def main():
 if __name__ == "__main__":
     print("\n⚠️ IMPORTANT: Before running this script:")
     print("1. Update SERVICE_ID and SECRET_KEY in this file")
-    print("2. Update TEST_CONTRACT_NUMBER with a real contract from your DB")
-    print("3. Make sure FastAPI server is running on http://localhost:8000")
-    print("4. Make sure the contract is ACTIVE and within valid date range")
+    print("2. Make sure FastAPI server is running on http://localhost:8000")
+    print("3. Make sure the contract exists in your database")
     input("\n✅ Press ENTER to continue...")
+
+    # Get test parameters from user
+    get_user_input()
 
     main()
