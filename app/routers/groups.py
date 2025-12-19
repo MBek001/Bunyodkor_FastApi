@@ -18,35 +18,46 @@ router = APIRouter(prefix="/groups", tags=["Groups"])
 @router.get("", response_model=DataResponse[list[GroupRead]], dependencies=[Depends(require_permission(PERM_GROUPS_VIEW))])
 async def get_groups(
     db: Annotated[AsyncSession, Depends(get_db)],
-    archive_year: int | None = Query(None, description="Filter by archive year (defaults to current year)"),
-    include_archived: bool = Query(False, description="Include archived groups (default: only ACTIVE)"),
+    archive_year: int | None = Query(None, description="Filter by archive year (NULL for groups not yet archived)"),
+    status: GroupStatus | None = Query(None, description="Filter by status (ACTIVE, ARCHIVED, DELETED)"),
+    include_archived: bool = Query(False, description="Include archived groups (ignored if status is specified)"),
     page: int = Query(1, ge=1),
     page_size: int = Query(20, ge=1, le=100),
 ):
     """
     Get all groups with optional filters.
 
-    Default behavior:
-    - Shows current year's ACTIVE groups only
-    - Archived groups are hidden unless include_archived=true
+    Default behavior (no filters):
+    - Shows all ACTIVE groups regardless of archive_year
+
+    Filters:
+    - archive_year: Filter by specific year, or use NULL to find groups not yet archived
+    - status: Filter by specific status (overrides include_archived)
+    - include_archived: Include all statuses if True (ignored if status is specified)
     """
-    from datetime import datetime
+    query = select(Group)
 
-    if archive_year is None:
-        archive_year = datetime.now().year
+    # Filter by archive_year if specified
+    if archive_year is not None:
+        query = query.where(Group.archive_year == archive_year)
 
-    query = select(Group).where(Group.archive_year == archive_year)
-
-    # Default: only ACTIVE groups (exclude ARCHIVED)
-    if not include_archived:
+    # Filter by status if specified (takes priority)
+    if status is not None:
+        query = query.where(Group.status == status)
+    # Otherwise, default to ACTIVE only unless include_archived is True
+    elif not include_archived:
         query = query.where(Group.status == GroupStatus.ACTIVE)
 
     offset = (page - 1) * page_size
     result = await db.execute(query.offset(offset).limit(page_size))
     groups = result.scalars().all()
 
-    count_query = select(func.count(Group.id)).where(Group.archive_year == archive_year)
-    if not include_archived:
+    count_query = select(func.count(Group.id))
+    if archive_year is not None:
+        count_query = count_query.where(Group.archive_year == archive_year)
+    if status is not None:
+        count_query = count_query.where(Group.status == status)
+    elif not include_archived:
         count_query = count_query.where(Group.status == GroupStatus.ACTIVE)
 
     count_result = await db.execute(count_query)
@@ -99,9 +110,12 @@ async def create_group(
     Identifier must be unique (enforced by database constraint).
     Multiple groups can have the same birth year as long as identifiers are different.
     """
-    # Check if identifier already exists
+    # Check if identifier already exists (excluding DELETED groups)
     existing_identifier = await db.execute(
-        select(Group).where(Group.identifier == data.identifier)
+        select(Group).where(
+            Group.identifier == data.identifier,
+            Group.status != GroupStatus.DELETED
+        )
     )
     if existing_identifier.scalar_one_or_none():
         raise HTTPException(
@@ -115,11 +129,8 @@ async def create_group(
         if not coach_result.scalar_one_or_none():
             raise HTTPException(status_code=404, detail=f"Coach with ID {data.coach_id} not found")
 
-    from datetime import datetime
-    current_year = datetime.now().year
-
     group_data = data.model_dump()
-    group_data['archive_year'] = current_year  # Set current year
+    # Don't auto-set archive_year - it should be NULL until actually archived
     group = Group(**group_data)
     db.add(group)
     await db.commit()
@@ -161,10 +172,13 @@ async def update_group(
 
     update_data = data.model_dump(exclude_unset=True)
 
-    # Check if identifier is being changed and if it already exists
+    # Check if identifier is being changed and if it already exists (excluding DELETED groups)
     if "identifier" in update_data and update_data["identifier"] != group.identifier:
         existing_identifier = await db.execute(
-            select(Group).where(Group.identifier == update_data["identifier"])
+            select(Group).where(
+                Group.identifier == update_data["identifier"],
+                Group.status != GroupStatus.DELETED
+            )
         )
         if existing_identifier.scalar_one_or_none():
             raise HTTPException(

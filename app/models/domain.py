@@ -22,7 +22,8 @@ class Student(Base, TimestampMixin):
     )
 
     # Archive year - used for yearly data separation (2025, 2026, etc.)
-    archive_year: Mapped[int] = mapped_column(Integer, nullable=False, index=True, server_default="2025")
+    # NULL until student is actually archived
+    archive_year: Mapped[int | None] = mapped_column(Integer, nullable=True, index=True)
 
     group_id: Mapped[int | None] = mapped_column(ForeignKey("groups.id", ondelete="SET NULL"), nullable=True)
 
@@ -66,7 +67,8 @@ class Group(Base, TimestampMixin):
     birth_year: Mapped[int] = mapped_column(Integer, nullable=False, index=True)
 
     # Archive year - used for yearly data separation (2025, 2026, etc.)
-    archive_year: Mapped[int] = mapped_column(Integer, nullable=False, index=True, server_default="2025")
+    # NULL until group is actually archived
+    archive_year: Mapped[int | None] = mapped_column(Integer, nullable=True, index=True)
 
     coach_id: Mapped[int | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
 
@@ -89,7 +91,8 @@ class Contract(Base, TimestampMixin):
     )
 
     # Archive year - used for yearly data separation (2025, 2026, etc.)
-    archive_year: Mapped[int] = mapped_column(Integer, nullable=False, index=True, server_default="2025")
+    # NULL until contract is actually archived
+    archive_year: Mapped[int | None] = mapped_column(Integer, nullable=True, index=True)
 
     # Contract number allocation fields
     birth_year: Mapped[int] = mapped_column(Integer, nullable=False, index=True)  # Student birth year for contract numbering
