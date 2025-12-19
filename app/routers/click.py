@@ -221,12 +221,13 @@ async def click_payment(
                 "error_note": f"Договор истек. Окончание: {contract.end_date.isoformat()}"
             }
 
+        # Cast payment_months to JSONB to avoid type mismatch
         duplicate_check = await db.execute(
             select(Transaction).where(
                 Transaction.contract_id == contract.id,
                 Transaction.status == PaymentStatus.SUCCESS,
                 Transaction.payment_year == payment_year,
-                Transaction.payment_months.op('@>')(cast([payment_month], JSONB))
+                cast(Transaction.payment_months, JSONB).op('@>')(cast([payment_month], JSONB))
             )
         )
         duplicate = duplicate_check.scalar_one_or_none()
@@ -372,12 +373,13 @@ async def click_payment(
                 "error_note": "Договор истек или еще не начался"
             }
 
+        # Cast payment_months to JSONB to avoid type mismatch
         final_duplicate_check = await db.execute(
             select(Transaction).where(
                 Transaction.contract_id == contract.id,
                 Transaction.status == PaymentStatus.SUCCESS,
                 Transaction.payment_year == payment_year,
-                Transaction.payment_months.op('@>')(cast([payment_month], JSONB)),
+                cast(Transaction.payment_months, JSONB).op('@>')(cast([payment_month], JSONB)),
                 Transaction.id != transaction.id
             )
         )

@@ -326,12 +326,13 @@ async def get_unpaid_students(
 
             # Check if student has paid for this specific month
             # Use PostgreSQL @> operator to check if JSON array contains the target month
+            # Cast payment_months to JSONB to avoid type mismatch
             transactions_result = await db.execute(
                 select(func.sum(Transaction.amount)).where(
                     Transaction.student_id == student.id,
                     Transaction.status == PaymentStatus.SUCCESS,
                     Transaction.payment_year == target_year_month,
-                    Transaction.payment_months.op('@>')(cast([target_month_num], JSONB))
+                    cast(Transaction.payment_months, JSONB).op('@>')(cast([target_month_num], JSONB))
                 )
             )
             month_paid = transactions_result.scalar() or 0
@@ -493,12 +494,13 @@ async def export_unpaid_students(
 
             total_expected += month_expected
 
+            # Cast payment_months to JSONB to avoid type mismatch
             transactions_result = await db.execute(
                 select(func.sum(Transaction.amount)).where(
                     Transaction.student_id == student.id,
                     Transaction.status == PaymentStatus.SUCCESS,
                     Transaction.payment_year == target_year_month,
-                    Transaction.payment_months.op('@>')(cast([target_month_num], JSONB))
+                    cast(Transaction.payment_months, JSONB).op('@>')(cast([target_month_num], JSONB))
                 )
             )
             month_paid = transactions_result.scalar() or 0
@@ -747,13 +749,14 @@ async def export_comprehensive_student_data(
                         total_expected += float(contract.monthly_fee)
 
                         # Check if student has paid for this month
+                        # Cast payment_months to JSONB to avoid type mismatch
                         payment_result = await db.execute(
                             select(func.sum(Transaction.amount)).where(
                                 Transaction.student_id == student.id,
                                 Transaction.contract_id == contract.id,
                                 Transaction.status == PaymentStatus.SUCCESS,
                                 Transaction.payment_year == year_val,
-                                Transaction.payment_months.op('@>')(cast([month_val], JSONB))
+                                cast(Transaction.payment_months, JSONB).op('@>')(cast([month_val], JSONB))
                             )
                         )
                         month_paid = payment_result.scalar() or 0

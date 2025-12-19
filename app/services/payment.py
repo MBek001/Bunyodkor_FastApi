@@ -65,13 +65,14 @@ async def create_manual_transaction(
 
     # Check for duplicate payments - prevent paying for the same month twice
     for month in data.payment_months:
+        # Cast payment_months to JSONB to avoid type mismatch
         existing_payment = await db.execute(
             select(Transaction).where(
                 Transaction.contract_id == contract.id,
                 Transaction.student_id == contract.student_id,
                 Transaction.status == PaymentStatus.SUCCESS,
                 Transaction.payment_year == data.payment_year,
-                Transaction.payment_months.op('@>')(cast([month], JSONB))
+                cast(Transaction.payment_months, JSONB).op('@>')(cast([month], JSONB))
             )
         )
         existing = existing_payment.scalar_one_or_none()
