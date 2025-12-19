@@ -99,6 +99,16 @@ async def create_group(
     Identifier must be unique (enforced by database constraint).
     Multiple groups can have the same birth year as long as identifiers are different.
     """
+    # Check if identifier already exists
+    existing_identifier = await db.execute(
+        select(Group).where(Group.identifier == data.identifier)
+    )
+    if existing_identifier.scalar_one_or_none():
+        raise HTTPException(
+            status_code=400,
+            detail=f"Identifier '{data.identifier}' already exists. Please use a unique identifier."
+        )
+
     if data.coach_id:
         from app.models.auth import User
         coach_result = await db.execute(select(User).where(User.id == data.coach_id))
@@ -150,6 +160,17 @@ async def update_group(
         raise HTTPException(status_code=404, detail="Group not found")
 
     update_data = data.model_dump(exclude_unset=True)
+
+    # Check if identifier is being changed and if it already exists
+    if "identifier" in update_data and update_data["identifier"] != group.identifier:
+        existing_identifier = await db.execute(
+            select(Group).where(Group.identifier == update_data["identifier"])
+        )
+        if existing_identifier.scalar_one_or_none():
+            raise HTTPException(
+                status_code=400,
+                detail=f"Identifier '{update_data['identifier']}' already exists. Please use a unique identifier."
+            )
 
     if "coach_id" in update_data and update_data["coach_id"] is not None:
         from app.models.auth import User
