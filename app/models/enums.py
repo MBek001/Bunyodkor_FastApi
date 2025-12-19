@@ -24,6 +24,7 @@ class GroupStatus(str, Enum):
 class ContractStatus(str, Enum):
     ACTIVE = "active"
     EXPIRED = "expired"
+    TERMINATED = "terminated"
     DELETED = "deleted"
     ARCHIVED = "archived"
 

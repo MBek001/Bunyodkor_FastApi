@@ -315,7 +315,7 @@ async def get_unpaid_students(
                     month_expected += float(contract.monthly_fee)
                     # Count as active if it was active in any of the target months
                     if contract.status == ContractStatus.ACTIVE or (
-                        contract.status == ContractStatus.DELETED and
+                        contract.status == ContractStatus.TERMINATED and
                         contract.terminated_at and
                         contract.terminated_at.date() >= target_date
                     ):
@@ -1487,6 +1487,14 @@ async def update_student(
         raise HTTPException(status_code=404, detail="Student not found")
 
     update_data = data.model_dump(exclude_unset=True)
+
+    # Prevent changing student's group once assigned
+    if "group_id" in update_data and student.group_id is not None:
+        if update_data["group_id"] != student.group_id:
+            raise HTTPException(
+                status_code=400,
+                detail="Cannot change student's group. Students cannot be transferred between groups."
+            )
 
     if "face_id" in update_data and update_data["face_id"] is not None:
         existing_face_id = await db.execute(

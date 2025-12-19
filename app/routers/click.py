@@ -159,7 +159,9 @@ async def click_payment(
                 "error_note": "Абонент не найден"
             }
 
-        if contract.status != ContractStatus.ACTIVE:
+        # Allow payments for ACTIVE, EXPIRED, TERMINATED, and ARCHIVED contracts
+        # Only DELETED contracts cannot receive payments
+        if contract.status == ContractStatus.DELETED:
             return {
                 "error": -5,
                 "error_note": "Абонент не найден"

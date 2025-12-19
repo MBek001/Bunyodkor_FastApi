@@ -26,11 +26,11 @@ async def create_manual_transaction(
     if not contract:
         raise ValueError(f"Contract with number '{data.contract_number}' not found")
 
-    # Validate contract is ACTIVE
-    if contract.status != ContractStatus.ACTIVE:
+    # Validate contract is not DELETED
+    # ACTIVE, EXPIRED, TERMINATED, and ARCHIVED contracts can receive payments for unpaid months
+    if contract.status == ContractStatus.DELETED:
         raise ValueError(
-            f"Contract '{data.contract_number}' is not active (current status: {contract.status.value}). "
-            f"Only ACTIVE contracts can receive new payments."
+            f"Contract '{data.contract_number}' is deleted and cannot receive new payments."
         )
 
     # Validate student is ACTIVE

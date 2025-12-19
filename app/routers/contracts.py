@@ -220,7 +220,7 @@ async def terminate_contract(
     contract.terminated_at = data.terminated_at or datetime.utcnow()
     contract.terminated_by_user_id = user.id
     contract.termination_reason = data.termination_reason
-    contract.status = ContractStatus.DELETED
+    contract.status = ContractStatus.TERMINATED
 
     await db.commit()
 
