@@ -761,8 +761,9 @@ async def get_contract_payment_status(
     ))
 
 
-@router.get("/{contract_number}/student-data", dependencies=[Depends(require_permission(PERM_CONTRACTS_VIEW))])
+@router.get("/{year}/{contract_number}/student-data", dependencies=[Depends(require_permission(PERM_CONTRACTS_VIEW))])
 async def get_contract_student_data(
+    year: int,
     contract_number: str,
     db: Annotated[AsyncSession, Depends(get_db)],
 ):
@@ -780,14 +781,17 @@ async def get_contract_student_data(
     - Old contract details
 
     Example:
-        GET /contracts/N1B12020/student-data
+        GET /contracts/2025/N1B12020/student-data
     """
     # Find contract with related student and parent data
     result = await db.execute(
         select(Contract).options(
             selectinload(Contract.student).selectinload(Student.parents)
         ).where(
-            Contract.contract_number == contract_number
+            and_(
+                Contract.contract_number == contract_number,
+                Contract.archive_year == year
+            )
         )
     )
     contract = result.scalar_one_or_none()
@@ -795,7 +799,7 @@ async def get_contract_student_data(
     if not contract:
         raise HTTPException(
             status_code=404,
-            detail=f"Contract {contract_number} not found"
+            detail=f"Contract {contract_number} for year {year} not found"
         )
 
     if not contract.student:

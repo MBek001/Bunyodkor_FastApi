@@ -129,8 +129,11 @@ async def create_group(
         if not coach_result.scalar_one_or_none():
             raise HTTPException(status_code=404, detail=f"Coach with ID {data.coach_id} not found")
 
+    from datetime import datetime
+    current_year = datetime.now().year
+
     group_data = data.model_dump()
-    # Don't auto-set archive_year - it should be NULL until actually archived
+    group_data['archive_year'] = current_year  # Auto-set to current year (2025, 2026, etc.)
     group = Group(**group_data)
     db.add(group)
     await db.commit()
