@@ -113,8 +113,10 @@ async def create_group(
     # Check if identifier already exists (excluding DELETED groups)
     existing_identifier = await db.execute(
         select(Group).where(
-            Group.identifier == data.identifier,
-            Group.status != GroupStatus.DELETED
+            and_(
+                Group.identifier == data.identifier,
+                Group.status != GroupStatus.DELETED
+            )
         )
     )
     if existing_identifier.scalar_one_or_none():
@@ -179,8 +181,10 @@ async def update_group(
     if "identifier" in update_data and update_data["identifier"] != group.identifier:
         existing_identifier = await db.execute(
             select(Group).where(
-                Group.identifier == update_data["identifier"],
-                Group.status != GroupStatus.DELETED
+                and_(
+                    Group.identifier == update_data["identifier"],
+                    Group.status != GroupStatus.DELETED
+                )
             )
         )
         if existing_identifier.scalar_one_or_none():
