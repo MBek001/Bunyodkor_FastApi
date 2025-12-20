@@ -27,18 +27,28 @@ async def create_role(
     data: RoleCreate,
     db: Annotated[AsyncSession, Depends(get_db)],
 ):
+    # Create new role
     role = Role(name=data.name, description=data.description)
 
+    # Add permissions if provided
     if data.permission_ids:
-        perms_result = await db.execute(select(Permission).where(Permission.id.in_(data.permission_ids)))
-        permissions = perms_result.scalars().all()
+        perms_result = await db.execute(
+            select(Permission).where(Permission.id.in_(data.permission_ids))
+        )
+        permissions = list(perms_result.scalars().all())
         role.permissions = permissions
 
+    # Save to database
     db.add(role)
     await db.commit()
-    await db.refresh(role, ["permissions"])
 
-    return DataResponse(data=RoleWithPermissions.model_validate(role))
+    # Re-fetch role with permissions
+    result = await db.execute(
+        select(Role).options(selectinload(Role.permissions)).where(Role.id == role.id)
+    )
+    created_role = result.scalar_one()
+
+    return DataResponse(data=RoleWithPermissions.model_validate(created_role))
 
 
 @router.patch("/{role_id}", response_model=DataResponse[RoleWithPermissions], dependencies=[Depends(require_permission(PERM_ROLES_MANAGE))])
@@ -47,25 +57,39 @@ async def update_role(
     data: RoleUpdate,
     db: Annotated[AsyncSession, Depends(get_db)],
 ):
-    result = await db.execute(select(Role).where(Role.id == role_id))
+    # Fetch role with permissions
+    result = await db.execute(
+        select(Role).options(selectinload(Role.permissions)).where(Role.id == role_id)
+    )
     role = result.scalar_one_or_none()
 
     if not role:
         raise HTTPException(status_code=404, detail="Role not found")
 
-    if data.name:
+    # Update basic fields
+    if data.name is not None:
         role.name = data.name
     if data.description is not None:
         role.description = data.description
+
+    # Update permissions if provided
     if data.permission_ids is not None:
-        perms_result = await db.execute(select(Permission).where(Permission.id.in_(data.permission_ids)))
-        permissions = perms_result.scalars().all()
+        perms_result = await db.execute(
+            select(Permission).where(Permission.id.in_(data.permission_ids))
+        )
+        permissions = list(perms_result.scalars().all())
         role.permissions = permissions
 
+    # Commit changes
     await db.commit()
-    await db.refresh(role, ["permissions"])
 
-    return DataResponse(data=RoleWithPermissions.model_validate(role))
+    # Re-fetch role with permissions to ensure fresh data
+    result = await db.execute(
+        select(Role).options(selectinload(Role.permissions)).where(Role.id == role_id)
+    )
+    updated_role = result.scalar_one()
+
+    return DataResponse(data=RoleWithPermissions.model_validate(updated_role))
 
 
 @router.delete("/{role_id}", response_model=DataResponse[dict], dependencies=[Depends(require_permission(PERM_ROLES_MANAGE))])
