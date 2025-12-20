@@ -94,6 +94,16 @@ async def mark_attendance(
     if not session:
         raise HTTPException(status_code=404, detail="Session not found")
 
+    # Check if attendance has already been marked for this session
+    existing_attendance = await db.execute(
+        select(Attendance).where(Attendance.session_id == session_id).limit(1)
+    )
+    if existing_attendance.scalar_one_or_none():
+        raise HTTPException(
+            status_code=400,
+            detail="Bu dars uchun davomat allaqachon qilib bo'lingan. Bir darsga faqat bir marta davomat qilish mumkin."
+        )
+
     student_result = await db.execute(select(Student).where(Student.id == data.student_id))
     if not student_result.scalar_one_or_none():
         raise HTTPException(status_code=404, detail=f"Student with ID {data.student_id} not found")
@@ -190,6 +200,16 @@ async def mark_bulk_attendance(
         raise HTTPException(
             status_code=404,
             detail="Session not found or you do not have permission to mark attendance"
+        )
+
+    # Check if attendance has already been marked for this session
+    existing_attendance = await db.execute(
+        select(Attendance).where(Attendance.session_id == session_id).limit(1)
+    )
+    if existing_attendance.scalar_one_or_none():
+        raise HTTPException(
+            status_code=400,
+            detail="Bu dars uchun davomat allaqachon qilib bo'lingan. Bir darsga faqat bir marta davomat qilish mumkin."
         )
 
     if data.session_id != session_id:
