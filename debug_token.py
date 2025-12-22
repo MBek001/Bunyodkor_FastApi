@@ -30,7 +30,7 @@ try:
         print("\n❌ 'sub' field is missing from payload!")
 
 except jwt.ExpiredSignatureError:
-    print("❌ Token has expired!")
+    print("❌ Token has expired")
 except jwt.JWTError as e:
     print(f"❌ Invalid token: {e}")
 except Exception as e:
