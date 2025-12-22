@@ -1,19 +1,25 @@
-name: Deploy Self-Hosted
+name: Deploy to fixed directory
 
 on:
- push:
-  branches: ["master"]
+  push:
+    branches: [ "main" ]
 
 jobs:
- deploy:
-  runs-on: self-hosted
+  deploy:
+    runs-on: [ self-hosted, prod ]
 
-  steps: 
-    - name: Checkout code
-      uses: actions/checkout@v4
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
 
-    - name: Deploy with Docker Compose
-      run: |
-        docker compose down 
-        docker compose up -d --build
-      
+      - name: Sync code to production directory
+        run: |
+          rsync -av --delete \
+            $GITHUB_WORKSPACE/ \
+            /workplace/bunyodkor/
+
+      - name: Deploy with Docker Compose
+        working-directory: /workplace/bunyodkor
+        run: |
+          docker compose down
+          docker compose up -d --build
