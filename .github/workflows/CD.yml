@@ -16,10 +16,10 @@ jobs:
         run: |
           rsync -av --delete \
             $GITHUB_WORKSPACE/ \
-            /workplace/bunyodkor/
+            ~/workplace/bunyodkor/
 
       - name: Deploy with Docker Compose
-        working-directory: /workplace/bunyodkor
+        working-directory: ~/workplace/bunyodkor
         run: |
           docker compose down
           docker compose up -d --build
