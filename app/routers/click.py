@@ -411,10 +411,6 @@ async def click_payment(
             "error_note": "Успешно",
             "params": {}
         }
-    else:
-    return {
-        "error": -3,
-        "error_note": "Действие не найдено"
-    }
+
 
     
