@@ -89,17 +89,10 @@ registerFontFamily(
     boldItalic='DejaVu-Bold'
 )
 
-
-
-
-# --- 2. USLUBLARNI (STYLES) SOZLASH ---
 styles = getSampleStyleSheet()
-# === barcha ParagraphStyle'larda DejaVu shriftni majburiy qo'llash ===
 for sname, s in styles.byName.items():
     s.fontName = FONT_NORMAL
 
-
-# Barcha kerakli uslublarni qo'shamiz
 styles.add(
     ParagraphStyle(name='TitleUz', fontName=FONT_BOLD, fontSize=15, alignment=TA_CENTER, spaceAfter=5, leading=18))
 styles.add(ParagraphStyle(name='SubtitleUz', fontName=FONT_NORMAL, fontSize=10, alignment=TA_CENTER, spaceAfter=15,
@@ -107,11 +100,9 @@ styles.add(ParagraphStyle(name='SubtitleUz', fontName=FONT_NORMAL, fontSize=10, 
 styles.add(ParagraphStyle(name='SectionHeaderUz', fontName=FONT_BOLD, fontSize=12, alignment=TA_CENTER, spaceAfter=10,
                           spaceBefore=15, leading=16))
 
-# Umumiy matn uslubi (birinchi qator chekinishi bilan)
 styles.add(ParagraphStyle(name='NormalUz', fontName=FONT_NORMAL, fontSize=11, leading=16, alignment=TA_JUSTIFY,
                           firstLineIndent=15, spaceAfter=3))
 
-# Ro'yxat elementlari uslubi (salbiy chekinish va ro'yxat uchun)
 styles.add(ParagraphStyle(name='ListItemUz', fontName=FONT_NORMAL, fontSize=11, leading=16, alignment=TA_JUSTIFY,
                           leftIndent=15, firstLineIndent=-15, spaceAfter=5))
 
@@ -121,7 +112,7 @@ styles.add(ParagraphStyle(name='AddressDetail', fontName=FONT_NORMAL, fontSize=1
 styles.add(ParagraphStyle(
     name='SectionHeaderUzSpaced',
     parent=styles['SectionHeaderUz'],
-    spaceBefore=65  # <-- headerdan oldin bo'sh joy qo'shadi
+    spaceBefore=65
 ))
 
 styles.add(ParagraphStyle(
@@ -174,7 +165,6 @@ class ContractPDFGenerator:
         """
         self.data = self._load_data(data_file_or_dict)
         self.story = []
-        # DocTemplate yaratish, sahifa kengligi 210mm. Marginlar 25mm.
         self.doc = SimpleDocTemplate(
             "FK_Bunyodkor_Shartnoma.pdf",
             pagesize=A4,
@@ -184,8 +174,6 @@ class ContractPDFGenerator:
             bottomMargin=25 * mm
         )
         self.doc.width = A4[0] - self.doc.leftMargin - self.doc.rightMargin
-
-        # Logotip fayl nomi
         self.logo_filename = "Bunyodkor-new.png"
 
     def _add_underlined_multiline_text(self, text, style, line_width=0.5):
@@ -196,7 +184,6 @@ class ContractPDFGenerator:
         lines = []
         current = ""
 
-        # Matnni satrlarga bo'lish
         for word in words:
             test = (current + " " + word).strip()
             if stringWidth(test, style.fontName, style.fontSize) <= max_width:
@@ -211,22 +198,15 @@ class ContractPDFGenerator:
         flowables = []
 
         for line in lines:
-            # Matn
             p = Paragraph(line, style)
-
-            # Matn tepadan padding → 0 (yopishmaydi)
-            # Matn pastdan padding → chiziqqa yaqin
             flowables.append(p)
 
-            # Chiziqni YAQIN QO'YAMIZ (faqat pastdan 1pt joy)
             table = Table(
                 [[""]],
                 colWidths=[max_width]
             )
             table.setStyle(TableStyle([
                 ('LINEBELOW', (0, 0), (0, 0), line_width, black),
-
-                # Paddinglarni NULL va HATTO MANFIY QILIB BERAMIZ
                 ('TOPPADDING', (0, 0), (0, 0), -4),
                 ('BOTTOMPADDING', (0, 0), (0, 0), 0),
                 ('LEFTPADDING', (0, 0), (0, 0), 0),
@@ -247,19 +227,16 @@ class ContractPDFGenerator:
         Returns:
             dict: Shartnoma ma'lumotlari
         """
-        # Agar dictionary berilgan bo'lsa, to'g'ridan-to'g'ri qaytaramiz
         if isinstance(data_file_or_dict, dict):
             print("Ma'lumotlar dictionary sifatida qabul qilindi")
             return data_file_or_dict
 
-        # Aks holda fayl yo'li deb hisoblaymiz
         if os.path.exists(data_file_or_dict):
             print(f"Ma'lumotlar fayli yuklanmoqda: {data_file_or_dict}")
             with open(data_file_or_dict, 'r', encoding='utf-8') as f:
                 return json.load(f)
         else:
             default_data = self._default_template()
-            # Namuna faylni yaratish
             with open(data_file_or_dict, 'w', encoding='utf-8') as f:
                 json.dump(default_data, f, indent=4, ensure_ascii=False)
             print(f"!!! Xato: Ma'lumotlar fayli topilmadi: {data_file_or_dict}")
@@ -343,7 +320,6 @@ class ContractPDFGenerator:
 
         img_path = student.get("student_image")
 
-        # Rasm bloki
         if img_path:
             try:
                 if img_path.startswith("http"):
@@ -363,18 +339,18 @@ class ContractPDFGenerator:
                     ))
             except Exception as e:
                 print(f"⚠️ Rasm yuklashda xato: {e}")
-                left_block = Paragraph("[Rasm yuklab bo‘lmadi]", ParagraphStyle(
+                left_block = Paragraph("[Rasm yuklab bo'lmadi]", ParagraphStyle(
                     name='PlaceholderStyle',
                     fontSize=8,
                     alignment=TA_CENTER
                 ))
         else:
-            left_block = Paragraph("[Rasm yo‘q]", ParagraphStyle(
+            left_block = Paragraph("[Rasm yo'q]", ParagraphStyle(
                 name='PlaceholderStyle',
                 fontSize=8,
                 alignment=TA_CENTER
             ))
-        # Direktor ma'lumoti
+
         right_style = ParagraphStyle(
             name='DirectorInfo',
             parent=styles['NormalUz'],
@@ -389,7 +365,6 @@ class ContractPDFGenerator:
         )
         right_block = Paragraph(right_text, right_style)
 
-        # Yuqori jadval (Rasm + Direktor)
         top_table = Table(
             [[left_block, right_block]],
             colWidths=[45 * mm, self.doc.width - 45 * mm]
@@ -405,11 +380,9 @@ class ContractPDFGenerator:
         self.story.append(top_table)
         self._add_spacer(10)
 
-        # --- Sarlavha ---
         self.story.append(Paragraph("<b>Ариза</b>", styles['TitleUz']))
         self._add_spacer(5)
 
-        # Ma'lumotlar
         student_fio = student.get("student_fio", "")
         student_birth_year = student.get("birth_year", "20__")
         student_address = student.get("student_address", "")
@@ -419,20 +392,17 @@ class ContractPDFGenerator:
         mom_phone = student.get("mom_phone_number", "")
         momordad_fio = buyurtmachi.get("fio", "")
 
-
-        # --- Matn qismi ---
-        left_indent_mm = 10  # barcha matnlar uchun bir xil offset (hat boshi)
+        left_indent_mm = 10
 
         self.story.append(Paragraph(
             f"Ушбу ариза билан Сиздан, <b>{student_birth_year}</b> йилда туғилган фарзандим (Ф.И.Ш.):",
             ParagraphStyle(
                 name='UshbuIndented',
                 parent=styles['NormalUzNoIndent'],
-                leftIndent=20  # bu joy mm emas, point! ~7mm
+                leftIndent=20
             )
         ))
 
-        # F.I.Sh qatori — chiziq va "ни," bilan bir qatorda
         fio_table = Table(
             [[
                 Paragraph(f"<b>{student_fio or '_____________________________________'}</b>", styles['NormalUz']),
@@ -452,7 +422,6 @@ class ContractPDFGenerator:
         self.story.append(fio_table)
         self._add_spacer(4)
 
-        # --- Manzil (bir xil chapdan boshlanadi va chiziq uzunligi F.I.Sh bilan teng) ---
         address_table = Table(
             [[Paragraph(f"<b>{student_address or '_____________________________________'}</b>", styles['NormalUz'])]],
             colWidths=[self.doc.width - (left_indent_mm + 10 * mm), 10 * mm]
@@ -466,7 +435,6 @@ class ContractPDFGenerator:
         ]))
         self.story.append(address_table)
 
-        # Kulrang pastki matn
         self.story.append(Paragraph(
             f"<para leftIndent={left_indent_mm}>(вилоят, шаҳар, туман, кўча, уй рақами, хонадон)</para>",
             ParagraphStyle(
@@ -484,8 +452,6 @@ class ContractPDFGenerator:
         ))
         self._add_spacer(8)
 
-
-        # --- Ота-она маълумотлари ---
         occupation_style = ParagraphStyle(
             name='OccupationStyle',
             fontName=FONT_NORMAL,
@@ -516,7 +482,6 @@ class ContractPDFGenerator:
         self.story.append(parent_table)
         self._add_spacer(15)
 
-        # --- Majburiyat qismi ---
         self.story.append(Paragraph("<b>ОТА-ОНАСИНИНГ МАЖБУРИЯТЛАРИ:</b>", styles['SectionHeaderUz']))
         self._add_spacer(5)
 
@@ -528,7 +493,6 @@ class ContractPDFGenerator:
         self.story.append(Paragraph(majburiyat_text, styles['NormalUzNoIndent']))
         self._add_spacer(15)
 
-        # --- Imzo ---
         imzo_table = Table([
             ["Ота-она (Ф.И.Ш.)", "", "Имзо"],
             [f"{momordad_fio}", "", "__________"]
@@ -541,7 +505,6 @@ class ContractPDFGenerator:
         self.story.append(imzo_table)
         self._add_spacer(10)
 
-        # Sahifa tugadi
         self.story.append(PageBreak())
 
 
@@ -556,22 +519,18 @@ class ContractPDFGenerator:
     def _add_logo(self):
         """Logotipni (rasmni) hujjat tepasiga qo'shish"""
         if os.path.exists(self.logo_filename):
-            # Logotip o'lchamini sozlash
             logo = RLImage(self.logo_filename, width=15 * mm, height=15 * mm)
 
             logo.hAlign = 'CENTER'
 
             self.story.append(logo)
 
-            # Logotipdan keyingi Spacer kamaytirildi
             self._add_spacer(1)
 
-            # Chiziq ostidagi Paddingni kamaytirish
             self.story.append(Table([['']], colWidths=[self.doc.width], style=TableStyle([
                 ('LINEBELOW', (0, 0), (-1, -1), 0.5, black),
                 ('BOTTOMPADDING', (0, 0), (-1, -1), 0)
             ])))
-            # Chiziqdan keyingi Spacerni kamaytirish
             self._add_spacer(3)
         else:
             print(f"!!! DIQQAT: Logotip fayli topilmadi: {self.logo_filename}. Sarlavha oddiy matn bilan davom etadi.")
@@ -580,10 +539,8 @@ class ContractPDFGenerator:
         """Shartnoma boshi (sarlavha, sana, joy)"""
         data = self.data
 
-        # 1. Logotipni qo'shish (Yangi qadam)
         self._add_logo()
 
-        # 2. Sarlavha
         self.story.append(Paragraph(
             f"Шартнома №{data.get('shartnoma_raqami', '______')}",
             styles['TitleUz']
@@ -593,7 +550,6 @@ class ContractPDFGenerator:
             styles['SubtitleUz']
         ))
 
-        # 3. Joy va sana
         sana = data.get('sana', {})
         sana_text = f'«{sana.get("kun", "___")}» {sana.get("oy", "___________")} {sana.get("yil", "___")} й.'
 
@@ -627,14 +583,11 @@ class ContractPDFGenerator:
         text1 = """<b>«FK BUNYODKOR» МЧЖ Тошкент шаҳар филиали</b> бундан буён «Ижрочи» деб юритиладиган, ишончнома асосида фаолият юритаётган Директор Ш.Н.Саидов, бир томондан ва бундан буён «Буюртмачи» деб юритиладиган """
         self.story.append(Paragraph(text1, styles['NormalUz']))
 
-        # Buyurtmachi FIO (PartyInfo uslubi bilan chiziqli ko'rinish beriladi)
-        # --- Buyurtmachi ma'lumotlarini chiqarish ---
         fio_buyurtmachi = buyurtmachi.get('fio', '________________________________')
         pasport_seriya = buyurtmachi.get('pasport_seriya', 'AA ________')
         pasport_kim_bergan = buyurtmachi.get('pasport_kim_bergan', '________________________________')
         pasport_qachon_bergan = buyurtmachi.get('pasport_qachon_bergan', '___.___._____')
 
-        # To‘liq matnni bold + underline formatda yasaymiz
         buyurtmachi_text = (
             f"{fio_buyurtmachi},  "
             f"{pasport_seriya},  "
@@ -652,8 +605,6 @@ class ContractPDFGenerator:
         )
         self.story.extend(elements)
 
-
-        # Izoh matni
         self.story.append(Paragraph(
             "(фуқаронинг Ф.И.Ш, паспорт серияси, ким томонидан ва қачон берилган)",
             styles['SmallText']
@@ -662,17 +613,14 @@ class ContractPDFGenerator:
         text2 = "бошқа томондан, ушбу шартномани қўйидагилар тўғрисида туздилар:"
         self.story.append(Paragraph(text2, styles['NormalUzNoIndent']))
 
-        # Tarbiyalanuvchi FIO
         text3 = "Тарбияланувчининг туғилганлик тўғрисидаги гувоҳномаси:"
         self.story.append(Paragraph(text3, styles['NormalUzNoIndent']))
 
-        # --- Tarbiyalanuvchi ma'lumotlarini olish ---
         fio_tarbiya = tarbiya.get('fio', '________________________________')
         guvohnoma = tarbiya.get('tugilganlik_guvohnoma', 'I-AA _________')
         guvohnoma_kim_bergan = tarbiya.get('guvohnoma_kim_bergan', '________________________________')
         guvohnoma_qachon_bergan = tarbiya.get('guvohnoma_qachon_bergan', '___.___._____')
 
-        # Bold formatda to‘liq matnni yasaymiz
         tarbiya_text = (
             f"{fio_tarbiya},  "
             f"{guvohnoma},  "
@@ -680,11 +628,9 @@ class ContractPDFGenerator:
             f"{guvohnoma_qachon_bergan}"
         )
 
-        # Tagiga chiziq chiziladigan multiline matn sifatida qo‘shamiz
         elements = self._add_underlined_multiline_text(tarbiya_text, styles['UnderlineField'])
         self.story.extend(elements)
 
-        # Izoh
         self.story.append(Paragraph(
             "(Ф.И.Ш, серияси, ким томонидан ва қачон берилган)",
             styles['SmallText']
@@ -702,6 +648,7 @@ class ContractPDFGenerator:
                 self.story.append(Paragraph(p, styles['NormalUz']))
 
     def _add_signature_block(self):
+        self._add_spacer(55)
         """11. Yuridik manzillar va imzolar"""
         self.story.append(Paragraph(
             "11. ЮРИДИК МАНЗИЛЛАР ВА БАНК РЕКВИЗИТЛАРИ",
@@ -711,9 +658,6 @@ class ContractPDFGenerator:
 
         buyurtmachi = self.data.get('buyurtmachi', {})
 
-        # =========================
-        #   IJROCHI BLOKI (chap)
-        # =========================
         ijrochi_text = """
         <b>« Ижрочи »</b><br/>
         <b>« FK BUNYODKOR » МЧЖ</b><br/>
@@ -730,11 +674,6 @@ class ContractPDFGenerator:
         """
         P_ijrochi = Paragraph(ijrochi_text, styles['AddressDetail'])
 
-        # =========================
-        #  BUYURTMACHI (ota-ona)
-        # =========================
-
-        # Pastga chiziq chizish uchun yordamchi funksiya
         def underline_row(text):
             t = Table([[Paragraph(text, styles['AddressDetail'])]],
                       colWidths=[self.doc.width / 2 - 20])
@@ -752,7 +691,6 @@ class ContractPDFGenerator:
         manzil = buyurtmachi.get("manzil", "")
         telefon = buyurtmachi.get("telefon", "")
 
-        # Buyurtmachi title
         right_block = [
             Paragraph("<b>«Буюртмачи»</b>", styles['AddressDetail']),
             Paragraph("«Ота ёки Она»", styles['AddressDetail']),
@@ -770,16 +708,11 @@ class ContractPDFGenerator:
             underline_row("Имзо")
         ]
 
-        # Convert list → flowables
         right_flow = []
         for item in right_block:
             if item is None:
                 continue
             right_flow.append(item)
-
-        # ============================
-        #    FINAL TABLE
-        # ============================
 
         signature_table = Table(
             [[P_ijrochi, right_flow]],
@@ -799,21 +732,17 @@ class ContractPDFGenerator:
     def get_flowables(self):
         """Barcha PDF elementlarini (Flowables) tayyorlash"""
 
-        # Ariza sahifasi
         self._add_ariza_page()
 
-        # Shartnoma sahifasi
         self._add_header()
         self._add_parties_info()
 
-        # --- 1. Shartnoma predmeti ---
         section1 = [
             "Мазкур шартноманинг предмети <b>Ижрочи</b> томонидан <b>Буюртмачига</b> пуллик жисмоний тарбия ва спорт хизматларини (футбол курси) кўрсатиш ҳисобланади.",
             "«FK BUNYODKOR» МЧЖ Тошкент шаҳар филиали ички тартиб қоидаларига мувофиқ пуллик жисмоний тарбия ва спорт хизматларини (футбол курси) кўрсатиш бўйича шартномалар ҳар ойнинг 25-санасидан бошлаб ой охирига қадар имзоланиши ва мазкур шартноманинг 6.1-бандига мувофиқ тўлов тўлангандан сўнг ўқув-машғулотлар бошлашга рухсат берилиши маълумот учун қабул қилинади."
         ]
         self._add_section("1", "Шартнома предмети", section1)
 
-        # --- 2. Ijrochining huquq va majburiyatlari ---
         section2_1 = [
             "<b>2.1. Ижрочи қуйидаги мажбуриятларни ўз зиммасига олади:</b>",
             "<b>2.1.1.</b> Машғулотларни тасдиқланган график асосида олиб бориш;",
@@ -829,82 +758,77 @@ class ContractPDFGenerator:
             "<b>2.2.1.</b> Шартнома муддати тугаши билан янги муддатга шартнома тузишдан бош тортиш, агар Буюртмачи амалдаги шартнома муддати давомида ушбу шартномада (тўлов муддати, соғлиғи ва ички тартиб қоидаларни бузиш ҳоллари) ва фуқаролик қонунчилигида белгиланган қоидабузарликларни содир қилса;",
             "<b>2.2.2.</b> Агар <b>Буюртмачи</b> ўз хоҳишига кўра спорт-машғулотларга қатнашишни тўхтатса, шунингдек, Ички тартиб қоидаларни мунтазам равишда бузиб келган бўлса, келиб тушган тўловларни қайтармайди. Бунда, Буюртмачи томонидан шартномнинг 6.1-бандига мувофиқ келиб тушган маблағлар ҳам қайтарилмаслиги инобатга олинади;",
             "<b>2.2.3.</b> <b>Ижрочи</b> бир томонлама шартнома шартларига ўзгартириш киритиш ҳуқуқига эга, хусусан, хизматлар нархини ўзгартириш масаласида (коммунал тўловлар нархининг ўсиши ва х.к.). Шартнома шартларининг ўзгариши тўғрисида Буюртмачи ўн кун олдин оғзаки ёки ёзма тарзда огоҳлантирилади;",
-            """2.2.4. Агар <b>Буюртмачи</b> шартноманинг амал қилиш мудати давомида ўз хоҳишига кўра узрли сабабларсиз спорт-машғулотларга қатнашишни 15 кундан ортиқ тўхтатиб, кейинги ойдан бошлаб спорт-машғулотларга қатнашиш истагини <b>Ижрочига</b> қайта билдирса, <b>Ижрочи</b> спорт-машғулотларга келинмаган кунлар учун ҳам тегишли тўловни талаб қилишга ҳақли.
-             Бунда, <b>Буюртмачи</b> томонидан мазкур талаб қилинаётган тўловларни тўламаслик мазкур шартномани Ижрочи томонидан хизмат кўрсатилиши тўхташига ва шартномани бекор қилинишига олиб келади""",
+            """<b>2.2.4.</b> Агар <b>Буюртмачи</b> шартноманинг амал қилиш мудати давомида ўз хоҳишига кўра узрли сабабларсиз спорт-машғулотларга қатнашишни 15 кундан ортиқ тўхтатиб, кейинги ойдан бошлаб спорт-машғулотларга қатнашиш истагини <b>Ижрочига</b> қайта билдирса, <b>Ижрочи</b> спорт-машғулотларга келинмаган кунлар учун ҳам тегишли тўловни талаб қилишга ҳақли. Бунда, <b>Буюртмачи</b> томонидан мазкур талаб қилинаётган тўловларни тўламаслик мазкур шартномани Ижрочи томонидан хизмат кўрсатилиши тўхташига ва шартномани бекор қилинишига олиб келади""",
             "<b>2.2.5.</b> Ижрочи ўз тарбияланувчилари (ОАВ, Интернетда) ҳақидаги маълумотларни тарқатишда ва буюртмачи билан профессионал футболда янада ривожлантириш масаласини ҳал қилишда имтиёзли ҳуқуққа эга;",
-            "<b>2.2.6.</b> Ижрочи ота-она (қонуний вакил)лар билан келишилган ҳолда спорт тадбирларини қисман молиялаштириш учун тарбияланувчининг ота-она маблағларини, шунингдек қонуний вакиллар маблағларини жалб қилиш ва фойдаланишга ҳақли."
+            "<b>2.2.6.</b> Ижрочи ота-она (қонуний вакил)лар билан келишилган ҳолда спорт тадбирларини қисман молиялаштириш учун тарбияланувчининг ота-она маблағларини, шунингдек қонуний вакиллар маблағларини жалб қилиш ва фойдаланишга ҳақли;",
+            "<b>2.2.7.</b> Мазкур шартнома бўйича кўрсатиладиган хизматларнинг амалга оширилиши бўйича маълумотлар берилишини талаб қилиш."
         ]
         self._add_section("2", "Ижрочининг ҳуқуқ ва мажбуриятлари", section2_1 + section2_2, is_list=True)
 
-        # --- 3. Buyurtmachi, tarbiyalanuvchining huquq va majburiyatlari ---
-        section3_1 = [
-            "<b>3.1. Буюртмачи қуйидагиларга ҳақли:</b>",
-            "<b>3.1.1.</b> Мазкур шартнома бўйича кўрсатиладиган хизматларнинг амалга оширилиши бўйича маълумотлар берилишини талаб қилиш;",
-            "<b>3.1.2.</b> Жисмоний тарбия ва спорт хизматларини кўрсатиш учун зарур бўлган Ижрочининг мулкидан фойдаланиш;",
-            "<b>3.1.3.</b> Ижрочи фаолиятини тартибга солувчи ҳужжатлар (Низом, спорт машғулотлари жадвали ва бошқалар) билан танишиш;",
-            "<b>3.1.4.</b> Мазкур шартномада белгиланган муддатларда Ижрочига ёзма хабар юбориш орқали хизматлардан фойдаланишдан бош тортиш."
-        ]
+        # section3_1 = [
+        #     "<b>3.1. Буюртмачи қуйидагиларга ҳақли:</b>",
+        #     "<b>3.1.1.</b> Мазкур шартнома бўйича кўрсатиладиган хизматларнинг амалга оширилиши бўйича маълумотлар берилишини талаб қилиш;",
+        #     "<b>3.1.2.</b> Жисмоний тарбия ва спорт хизматларини кўрсатиш учун зарур бўлган Ижрочининг мулкидан фойдаланиш;",
+        #     "<b>3.1.3.</b> Ижрочи фаолиятини тартибга солувчи ҳужжатлар (Низом, спорт машғулотлари жадвали ва бошқалар) билан танишиш;",
+        #     "<b>3.1.4.</b> Мазкур шартномада белгиланган муддатларда Ижрочига ёзма хабар юбориш орқали хизматлардан фойдаланишдан бош тортиш."
+        # ]
         section3_2 = [
             "<b>3.2. Буюртмачи қуйидаги мажбуриятларни ўз зиммасига олади:</b>",
             "<b>3.2.1.</b> Тиббий маълумотномани ўз вақтида тақдим этиш;",
             "<b>3.2.2.</b> Машғулотларни тўхтатиш бўйича оқилона муддат давомида Ижрочини хабардор қилиш;",
             "<b>3.2.3.</b> Машғулотларга белгиланган спорт экипировкасида келиш;",
             "<b>3.2.4.</b> Ўзбекистон Республикасининг амалдаги қонунчилик ҳужжатларига мувофиқ Ижрочига тегишли мол-мулкка етказилган зарарни қоплаб бериш;",
-            "<b>3.2.5.</b> Футбол клуби раҳбарияти ҳамда БЎФА тренерлари ваколат доирасига кирувчи масалаларга аралашмаслик, жумладан, спорт-машғулот жараёнини ташкил этиш ва ўтказиш ишларига, футбол ўйинининг тактик режаси, шунингдек сафарлар, учрашувлар ва ҳакозоларнинг умумий режасига таъллуқли кўрсатмаларга ҳамда Клуб (БЎФА) обрўсига путур етказишга ҳаракатлар тўғрисида хабар бериб туриш."
+            "<b>3.2.5.</b> Футбол клуби раҳбарияти ҳамда БЎФА тренерлари ваколат доирасига кирувчи масалаларга аралашмаслик, жумладан, спорт-машғулот жараёнини ташкил этиш ва ўтказиш ишларига, футбол ўйинининг тактик режаси, шунингдек сафарлар, учрашувлар ва ҳакозоларнинг умумий режасига таъллуқли кўрсатмаларга ҳамда Клуб (БЎФА) обрўсига путур етказишга ҳаракатлар тўғрисида хабар бериб туриш;",
+            "<b>3.2.6.</b> \"ФК Бунёдкор\" МЧЖ Тошкент шаҳри филиали (болалар ва ўсмирлар футбол академияси)да тарбияланаётган ёш футболчилар ота-оналарининг аҳлоқ қоидаси\"ва академиянинг бошқа локал ҳужжатлари нормаларига тўлиқ ва сўзсиз амал қилиш."
         ]
         section3_3 = [
-            "<b>3.3. Буюртмачи, тарбияланувчининг мажбуриятлари:</b>",
-            "<b>3.3.1.</b> Мазкур шартноманинг амал қилиш муддати тугагунга қадар бошқа спорт мактаби (секция, академия), спорт мактаб-интернати, профессионал ёки ҳаваскор футбол клуби (шу жумладан селекционерлар) билан ушбу шартномага ўхшаш шартнома (контракт) тузмаслик;",
-            "<b>3.3.2.</b> Тарбияланувчини машғулотлар жараёнида бошқа спорт мактаби (секция, академия), спорт мактаб-интернати, профессионал ёки ҳаваскор футбол клуб юбормайди."
+            "<b>3.3. Буюртмачи қуйидагиларга ҳақли:</b>",
+            "<b>3.3.1.</b> Мазкур шартнома бўйича кўрсатиладиган хизматларнинг амалга оширилиши бўйича маълумотлар берилишини талаб қилиш;",
+            "<b>3.3.2.</b> Жисмоний тарбия ва спорт хизматларини кўрсатиш учун зарур бўлган Ижрочининг мулкидан фойдаланиш: машқлар даврида тренажер залидан ва машқлардан сўнг душ (ювиниш) хонасидан;",
+            "<b>3.3.3.</b> Ижрочи фаолиятини тартибга солувчи ҳужжатлар (Низом, спорт машғулотлари жадвали ва бошқалар) билан танишиш;",
+            "<b>3.3.4.</b> Мазкур шартномада белгиланган муддатларда Ижрочига ёзма хабар юбориш орқали хизматлардан фойдаланишдан бош тортиш;",
+            "<b>3.3.5.</b> Мазкур шартнома бўйича кўрсатиладиган хизматларнинг амалга оширилиши бўйича маълумотлар берилишини талаб қилиш;",
+            "<b>3.3.6.</b> Жисмоний тарбия ва спорт хизматларини кўрсатиш учун зарур бўлган Ижрочининг мулкидан фойдаланиш."
+        ]
+        section3_4 = [
+            "<b>3.4. Буюртмачи, тарбияланувчининг мажбуриятлари:</b>",
+            "<b>3.4.1.</b> Мазкур шартноманинг амал қилиш муддати тугагунга қадар бошқа спорт мактаби (секция, академия), спорт мактаб-интернати, профессионал ёки ҳаваскор футбол клуби (шу жумладан селекционерлар) билан ушбу шартномага ўхшаш шартнома (контракт) тузмаслик;",
+            "<b>3.4.2.</b> Тарбияланувчини машғулотлар жараёнида бошқа спорт мактаби (секция, академия), спорт мактаб-интернати, профессионал ёки ҳаваскор футбол клубга юбормайди."
         ]
 
         self._add_section(
             "3",
             "Буюртмачи, тарбияланувчининг ҳуқуқ ва мажбуриятлари",
-            section3_1 + section3_2 + section3_3,
+             section3_2 + section3_3 + section3_4,
             is_list=True,
             header_style='SectionHeaderUzSpaced'
         )
 
-        # --- 4. Shartnomaning amal qilish muddati ---
         muddat = self.data.get('shartnoma_muddati', {})
         section4 = [
             f"Мазкур шартнома «{muddat.get('boshlanish', '___')}» {muddat.get('yil', '2025')} йилдан {muddat.get('yil', '2025')} йил «{muddat.get('tugash', '31')}» декабрга қадар амал қилади."
         ]
         self._add_section("4", "Шартноманинг амал қилиш муддати", section4, is_list=False)
 
-        # --- 5. Buyurtmachi va ijrochining huquqlari (Matn asl nusxada 3-bandda birlashtirilgani sababli takrorlanadi) ---
         section5 = [
-            "<b>5.1. </b>Мазкур шартнома бўйича кўрсатиладиган хизматларнинг амалга оширилиши бўйича маълумотлар берилишини талаб қилиш;",
-            "<b>5.2. </b>Жисмоний тарбия ва спорт хизматларини кўрсатиш учун зарур бўлган Ижрочининг мулкидан фойдаланиш."
+            "<b>5.1.</b> Томонларнинг ҳеч бири ушбу шартноманинг ҳар қандай бузилиши учун жавобгар бўлмайди, агар бу тўғридан-тўғри ёки билвосита томонлар назоратидан ташқари бўлган табиий ҳодисалар натижасида келиб чиққан бўлса, шу жумладан ҳарбий ҳаракатлар, ҳукумат қарорлари, ёнғин, карантин, тошқин ёки изоҳлаб бўлмайдиган табиий ҳодисалар."
         ]
-        self._add_section("5", "Буюртмачи ва ижрочининг ҳуқуқлари", section5, is_list=True)
+        self._add_section("5", "Форс-мажор", section5, is_list=False)
 
-        # --- 6. To'lov qilish tartibi ---
         tolov = self.data.get('tolov', {})
 
         narx = tolov.get('oylik_narx', '600 000')
         narx_sozlar = tolov.get('oylik_narx_sozlar', 'олти юз минг')
 
-        # Bold + underline qilib beramiz
         narx_html = f"<u><b>{narx}</b></u>"
         narx_sozlar_html = f"<u><b>{narx_sozlar}</b></u>"
 
         section6 = [
             f"<b>6.1.</b> Абонементнинг ойлик тўлов нархи ҚҚСсиз {narx_html} ({narx_sozlar_html}) сўмни ташкил қилади.",
 
-            """<b>6.2.</b> Ушбу шартнома бўйича тўлов спорт-машғулот бошланишига қадар 100% миқдорида ҳар ойнинг 1
-            (биринчи) санасидан 10 (ўнинчи) санасига қадар пул кўчириш ёки пластик карта орқали клубга хизмат
-            кўрсатадиган банкдаги ҳисоб рақамига ўтказган ҳолда амалга оширилади. Мазкур бандда келтирилган
-            тартибда тўловлар амалга оширилганда тўлов топшириқномаларини тўғри тўлдириш ва Ижрочига ўз
-            вақтида топшириш Буюртмачи зиммасига юклатилади. Тўғри тўлдирилмаган ёки Ижрочига ўз вақтида
-            топширилмаган тўлов топшириқномалари бўйича тўловлар Буюртмачи томонидан мазкур шартноманинг
-            рўйхатга олинган рақами бўйича қабул қилинади.""",
+            """<b>6.2.</b> Ушбу шартнома бўйича тўлов спорт-машғулот бошланишига қадар 100% миқдорида ҳар ойнинг 1 (биринчи) санасидан 10 (ўнинчи) санасига қадар пул кўчириш ёки пластик карта орқали клубга хизмат кўрсатадиган банкдаги ҳисоб рақамига ўтказган ҳолда амалга оширилади. Мазкур бандда келтирилган тартибда тўловлар амалга оширилганда тўлов топшириқномаларини тўғри тўлдириш ва Ижрочига ўз вақтида топшириш Буюртмачи зиммасига юклатилади. Тўғри тўлдирилмаган ёки Ижрочига ўз вақтида топширилмаган тўлов топшириқномалари бўйича тўловлар Буюртмачи томонидан мазкур шартноманинг рўйхатга олинган рақами бўйича қабул қилинади.""",
 
-            f"""<b>6.3.</b> Ота-оналар бир марталик {narx_html} ({narx_sozlar_html}) сўмни олдиндан тўловини амалга
-            оширадилар, ушбу тўлов тарбияланувчининг ўқишга келишини ва ота-оналарнинг тўловларни мунтазам
-            (ўз вақтида) амалга ошириш ниятларининг кафолатидир. Ушбу тўлов орқали шартноманинг сўнги ойи
-            тулови ёпилади."""
+            f"""<b>6.3.</b> Ота-оналар бир марталик {narx_html} ({narx_sozlar_html}) сўмни олдиндан тўловини амалга оширадилар, ушбу тўлов тарбияланувчининг ўқишга келишини ва ота-оналарнинг тўловларни мунтазам (ўз вақтида) амалга ошириш ниятларининг кафолатидир. Ушбу тўлов орқали шартноманинг сўнги ойи тўлови ёпилади. Агар Буюртмачи шартномани муддатидан аввал сабабсиз бекор қилса, ушбу тўлов қайтарилмайди. Ушбу тўлов ота-оналар академия раҳбариятига ариза ёзиб, асосли ҳужжатларни (соғлиғи, яшаш жойи ўзгариши) тақдим этганда қайтарилиши мумкин."""
         ]
 
         self._add_section("6", "Тўлов қилиш тартиби", section6, is_list=True)
@@ -914,6 +838,7 @@ class ContractPDFGenerator:
             "<b>7.1.</b>Шартнома доирасида ўз мажбуриятларини бажариш қисми сифатида, томонлар амалдаги қонун талабларига мувофиқликни таъминлаш, шу жумладан, коррупцияга қарши кураш бўйича қабул қилинган қонунга риоя этиш, улар, уларнинг ходимлари, филиаллари, бенефициар ва бизнес ҳамкорлар, воситачилар, пудратчилар ёки агентлар шартнома бажаришда пул бериш ёки пора сифатида қабул қилиш, тижорат порахўрлиги, порахўрликда воситачилик, давлат органи, давлат ҳиссаси иштирокидаги ташкилотлар ёки фуқароларнинг ўзини ўзи бошқариш органлари ходимларига пул таклиф қилиш ва ушбу шартнома ҳамда коррупцияга қарши кураш бўйича халқаро актлар ва жиноятчиликдан тушган тушумларни легаллаштириш (ўз ҳисобига ноқонуний равишда ўтқазиш) ва терроризмни молиялаштириш мақсадлари учун амалдаги қонун ҳужжатларида назарда тутилган бошқа ҳуқуқбузарликлар каби ишларни (ёки ҳеч нарса қилмасликдан бўйин товлаш) амалга оширмайдилар.",
             "<b>7.2.</b>Тарафлар тўғридан-тўғри ёки билвосита шахсан ёки учинчи шахслар орқали, таклиф, ваъда, пора, талаб, пул қабул қилиш учун розилик, бошқа бойликлар, мулк, мулк ҳуқуқлари ёки бошқа моддий ва/ёки номоддий манфаат йўлида ёки бирон шахс томонидан ноҳақ фойда олиш учун тарафлар ўртасидаги муносабатлардан фойдаланиб, ошкоралик ва очиқлик тамойилларига қарши равишда, шу жумладан, бошқа ноқонуний мақсадларга эришиш учун уларга таъсир кўрсатиш. Томонлар ушбу ҳаракатларнинг олдини олиш бўйича барча чора-тадбирларни кўришни кафолатлайди."
         ]
+        self._add_spacer(25)
         self._add_section("7", "Коррупцияга қарши қоидалар", section7, is_list=False)
 
         section8 = [
@@ -921,16 +846,17 @@ class ContractPDFGenerator:
         ]
         self._add_section("8", "Тарафларнинг жавобгарлиги", section8, is_list=False)
 
-        section9 = [
-            "<b>9.1.</b>Ушбу шартномани ижро қилиш билан боғлиқ барча низолар тарафлар ўртасида музокаралар ўтказиш йўли билан ҳал этилади. Тарафлар учун низоларни талабнома юбориш орқали кўриб чиқиш мажбурий ҳисобланади, шу билан бир қаторда талабномани кўриб чиқиш муддати – уни олгандан бошлаб 15 кунни ташкил қилади. Низолар бўйича келишувга эришилмаган тақдирда, низо суд идораларида кўриб чиқилади."
-        ]
-        self._add_section(
-            "9",
-            "Низоларни ҳал этиш тартиби",
-            section9,
-            is_list=False,
-            header_style='SectionHeaderUzSpaced'
-        )
+        section9_elements = []
+        section9_elements.append(Paragraph(
+            "9. Низоларни ҳал этиш тартиби",
+            styles['SectionHeaderUzSpaced']
+        ))
+        section9_elements.append(Paragraph(
+            "<b>9.1.</b>Ушбу шартномани ижро қилиш билан боғлиқ барча низолар тарафлар ўртасида музокаралар ўтказиш йўли билан ҳал этилади. Тарафлар учун низоларни талабнома юбориш орқали кўриб чиқиш мажбурий ҳисобланади, шу билан бир қаторда талабномани кўриб чиқиш муддати – уни олгандан бошлаб 15 кунни ташкил қилади. Низолар бўйича келишувга эришилмаган тақдирда, низо суд идораларида кўриб чиқилади.",
+            styles['NormalUz']
+        ))
+
+        self.story.append(KeepTogether(section9_elements))
 
         section10 = [
             "<b>10.1.</b> <b>Буюртмачи</b> футболнинг тўқнашувларга бой спорт туриш эканлиги хақида огоҳлантирилган ва машғулотлар пайтида, спорт мусобақалари, жароҳатлар ва шикастланишлар бўлиши мумкин, <b>Ижрочи</b> улар учун жавобгар эмас, агар уларнинг айблари сабабли бўлганлиги исботланмаган бўлса.",
