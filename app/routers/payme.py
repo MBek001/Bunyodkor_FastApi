@@ -179,13 +179,13 @@ async def check_perform_transaction(params: dict, request_id: int, db: AsyncSess
             request_id
         )
 
-    amount_sum = amount
-    min_amount = float(contract.monthly_fee)
+    amount_sum = float(amount)
+    expected_amount = float(contract.monthly_fee)
 
-    if amount_sum < min_amount:
+    if amount_sum != expected_amount:
         return create_error_response(
             PaymeError.INVALID_AMOUNT,
-            f"Неверная сумма оплаты. Минимум: {min_amount}",
+            f"Сумма должна быть равна месячной оплате: {expected_amount}",
             request_id
         )
 
