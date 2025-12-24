@@ -51,6 +51,7 @@ def check_authorization(request: Request) -> bool:
     except Exception:
         return False
 
+
 def create_error_response(error_code: int, message: str, request_id: int = None):
     response = {
         "error": {
@@ -69,10 +70,11 @@ def create_success_response(result: dict, request_id: int):
         "id": request_id
     }
 
+
 @router.post("/payment")
 async def payme_payment(
-    request: Request,
-    db: Annotated[AsyncSession, Depends(get_db)]
+        request: Request,
+        db: Annotated[AsyncSession, Depends(get_db)]
 ):
     """Payme'dan kelgan barcha so'rovlarni handle qilish"""
     try:
@@ -117,13 +119,12 @@ async def payme_payment(
 
 async def get_statement(params: dict, request_id: int, db: AsyncSession):
     """
-    ✅ YANGI METOD!
-    Foydalanuvchi contract number va year kiritganda,
-    o'sha yil uchun student va to'lanmagan oylar haqida ma'lumot berish
+    ✅ Student va to'lanmagan oylar haqida ma'lumot berish
 
     Parametrlar:
     - contract: Shartnoma raqami (masalan, "NB12011")
-    - year: Shartnoma yili / archive_year (masalan, 2025)
+    - archive_year: Shartnoma yili (masalan, 2025 yoki 2026)
+    - payment_year: To'lov yili (agar berilmasa, archive_year ishlatiladi)
     """
     account = params.get("account", {})
 
@@ -135,25 +136,25 @@ async def get_statement(params: dict, request_id: int, db: AsyncSession):
             request_id
         )
 
-    # Year - bu shartnoma yili (archive_year), MAJBURIY!
-    year = account.get("year")
-    if not year:
+    # archive_year - shartnoma qaysi yilga tegishli
+    archive_year = account.get("archive_year")
+    if not archive_year:
         return create_error_response(
             PaymeError.INVALID_PARAMS,
-            "Год договора не указан",
+            "Год договора (archive_year) не указан",
             request_id
         )
 
     try:
-        year = int(year)
+        archive_year = int(archive_year)
     except (TypeError, ValueError):
         return create_error_response(
             PaymeError.INVALID_PARAMS,
-            "Неверный год",
+            "Неверный год договора",
             request_id
         )
 
-    print(f"📋 GetStatement: contract={contract_number}, year={year}")
+    print(f"📋 GetStatement: contract={contract_number}, archive_year={archive_year}")
 
     # 1. Shartnomani topish (contract_number + archive_year)
     contract_result = await db.execute(
@@ -161,7 +162,7 @@ async def get_statement(params: dict, request_id: int, db: AsyncSession):
         .options(joinedload(Contract.student))
         .where(
             Contract.contract_number == contract_number,
-            Contract.archive_year == year  # ✅ MUHIM: Yil bo'yicha filtrlash
+            Contract.archive_year == archive_year
         )
     )
     contract = contract_result.scalar_one_or_none()
@@ -171,22 +172,29 @@ async def get_statement(params: dict, request_id: int, db: AsyncSession):
             "error": {
                 "code": -31050,
                 "message": {
-                    "ru": f"Договор {contract_number} за {year} год не найден",
-                    "uz": f"{contract_number} shartnoma {year} yil uchun topilmadi",
-                    "en": f"Contract {contract_number} for year {year} not found"
+                    "ru": f"Договор {contract_number} за {archive_year} год не найден",
+                    "uz": f"{contract_number} shartnoma {archive_year} yil uchun topilmadi",
+                    "en": f"Contract {contract_number} for year {archive_year} not found"
                 },
                 "data": "account.contract"
             },
             "id": request_id
         }
 
-    # 2. Student ma'lumotlari
+    # 2. DELETED statusni tekshirish
+    if contract.status == ContractStatus.DELETED:
+        return create_error_response(
+            PaymeError.COULD_NOT_PERFORM,
+            "Договор удален",
+            request_id
+        )
+
+    # 3. Student ma'lumotlari
     student = contract.student
 
-    # 3. To'langan oylarni aniqlash
+    # 4. To'langan oylarni aniqlash
     from datetime import date as date_class
 
-    # Shartnoma davri (start_date dan end_date gacha)
     contract_start_month = date_class(
         contract.start_date.year, contract.start_date.month, 1
     )
@@ -194,7 +202,7 @@ async def get_statement(params: dict, request_id: int, db: AsyncSession):
         contract.end_date.year, contract.end_date.month, 1
     )
 
-    # SUCCESS to'lovlarni olish (faqat shu shartnoma uchun)
+    # SUCCESS to'lovlarni olish
     paid_transactions = await db.execute(
         select(Transaction).where(
             Transaction.contract_id == contract.id,
@@ -209,7 +217,7 @@ async def get_statement(params: dict, request_id: int, db: AsyncSession):
         if t.payment_months:
             paid_months.update(t.payment_months)
 
-    # 4. Barcha oylar (shartnoma davomidagi)
+    # 5. Barcha oylar
     month_names_ru = {
         1: "Январь", 2: "Февраль", 3: "Март", 4: "Апрель",
         5: "Май", 6: "Июнь", 7: "Июль", 8: "Август",
@@ -223,8 +231,6 @@ async def get_statement(params: dict, request_id: int, db: AsyncSession):
     }
 
     available_months = []
-
-    # Shartnoma start_date dan end_date gacha barcha oylar
     current_month_date = contract_start_month
     while current_month_date <= contract_end_month:
         month = current_month_date.month
@@ -234,26 +240,24 @@ async def get_statement(params: dict, request_id: int, db: AsyncSession):
             "month": month,
             "month_name_ru": month_names_ru[month],
             "month_name_uz": month_names_uz[month],
-            "amount": int(contract.monthly_fee * 100),  # Tiyin
+            "amount": int(contract.monthly_fee * 100),
             "status": "paid" if is_paid else "unpaid"
         })
 
-        # Keyingi oyga o'tish
         if month == 12:
             current_month_date = date_class(current_month_date.year + 1, 1, 1)
         else:
             current_month_date = date_class(current_month_date.year, month + 1, 1)
 
-    # 5. Javob qaytarish
     return create_success_response(
         {
             "contract": {
                 "number": contract.contract_number,
-                "year": contract.archive_year,  # ✅ Shartnoma yili
+                "archive_year": contract.archive_year,
                 "status": contract.status.value,
                 "start_date": contract.start_date.isoformat(),
                 "end_date": contract.end_date.isoformat(),
-                "monthly_fee": int(contract.monthly_fee * 100)  # Tiyin
+                "monthly_fee": int(contract.monthly_fee * 100)
             },
             "student": {
                 "name": f"{student.first_name} {student.last_name}",
@@ -271,12 +275,13 @@ async def get_statement(params: dict, request_id: int, db: AsyncSession):
 
 async def check_perform_transaction(params: dict, request_id: int, db: AsyncSession):
     """
-    To'lov qilish mumkinligini tekshirish
+    ✅ To'lov qilish mumkinligini tekshirish
 
     Parametrlar:
     - contract: Shartnoma raqami
-    - year: Shartnoma yili (archive_year)
+    - archive_year: Shartnoma yili (2025, 2026, ...)
     - payment_month: To'lov oyi (1-12)
+    - payment_year: Qaysi yil uchun to'lov (masalan, 2026)
     - amount: To'lov summasi (tiyin)
     """
     amount = params.get("amount")
@@ -288,19 +293,43 @@ async def check_perform_transaction(params: dict, request_id: int, db: AsyncSess
         )
 
     contract_number = account.get("contract")
-    year = account.get("year")
+    archive_year = account.get("archive_year")
     payment_month = account.get("payment_month")
+    payment_year = account.get("payment_year")
 
-    if not contract_number or not year or not payment_month:
+    # Validatsiya
+    if not contract_number:
         return create_error_response(
             PaymeError.INVALID_PARAMS,
-            "Номер договора, год и месяц обязательны",
+            "Номер договора обязателен",
+            request_id
+        )
+
+    if not archive_year:
+        return create_error_response(
+            PaymeError.INVALID_PARAMS,
+            "Год договора (archive_year) обязателен",
+            request_id
+        )
+
+    if not payment_month:
+        return create_error_response(
+            PaymeError.INVALID_PARAMS,
+            "Месяц оплаты обязателен",
+            request_id
+        )
+
+    if not payment_year:
+        return create_error_response(
+            PaymeError.INVALID_PARAMS,
+            "Год оплаты (payment_year) обязателен",
             request_id
         )
 
     try:
-        year = int(year)
+        archive_year = int(archive_year)
         payment_month = int(payment_month)
+        payment_year = int(payment_year)
     except (TypeError, ValueError):
         return create_error_response(
             PaymeError.INVALID_PARAMS, "Неверные параметры", request_id
@@ -311,47 +340,56 @@ async def check_perform_transaction(params: dict, request_id: int, db: AsyncSess
             PaymeError.INVALID_PARAMS, "Неверный месяц (1-12)", request_id
         )
 
-    print(f"✅ CheckPerform: contract={contract_number}, year={year}, month={payment_month}")
+    print(
+        f"✅ CheckPerform: contract={contract_number}, archive_year={archive_year}, payment_month={payment_month}, payment_year={payment_year}")
 
-    # 1. Shartnomani topish (contract_number + archive_year)
+    # 1. Shartnomani topish
     contract_result = await db.execute(
         select(Contract).where(
             Contract.contract_number == contract_number,
-            Contract.archive_year == year  # ✅ MUHIM!
+            Contract.archive_year == archive_year
         )
     )
     contract = contract_result.scalar_one_or_none()
 
     if not contract:
+        return {
+            "error": {
+                "code": -31050,
+                "message": {
+                    "ru": f"Договор {contract_number} за {archive_year} год не найден",
+                    "uz": f"{contract_number} shartnoma {archive_year} yil uchun topilmadi",
+                    "en": f"Contract {contract_number} for year {archive_year} not found"
+                },
+                "data": "account.contract"
+            },
+            "id": request_id
+        }
+
+    # 2. Status tekshiruvi - faqat DELETED bo'lsa rad etish
+    if contract.status == ContractStatus.DELETED:
         return create_error_response(
-            PaymeError.INVALID_ACCOUNT,
-            f"Договор {contract_number} за {year} год не найден",
+            PaymeError.COULD_NOT_PERFORM,
+            "Договор удален",
             request_id
         )
 
-    # 2. Summa tekshiruvi
+    # 3. Summa tekshiruvi
     amount_sum = float(amount)
-    expected_amount = float(contract.monthly_fee * 100)  # Tiyin
+    expected_amount = float(contract.monthly_fee * 100)
 
     if amount_sum != expected_amount:
         return create_error_response(
             PaymeError.INVALID_AMOUNT,
-            f"Сумма должна быть равна {expected_amount} тийин",
+            f"Сумма должна быть равна {int(expected_amount)} тийин",
             request_id
         )
 
-    # 3. Oy shartnoma davomida ekanligini tekshirish
+    # 4. Oy shartnoma davomida ekanligini tekshirish
     from datetime import date as date_class
 
     contract_start = date_class(contract.start_date.year, contract.start_date.month, 1)
     contract_end = date_class(contract.end_date.year, contract.end_date.month, 1)
-
-    # To'lov oyi shartnoma davomida bo'lishi kerak
-    # Lekin yil farq qilishi mumkin (masalan, 2025 yil shartnomasi 2026 yil yanvar uchun)
-    # Shuning uchun faqat oy va kunni tekshiramiz, yilni emas
-
-    # Oddiy tekshiruv: payment_month shartnoma davomida bo'lsin
-    # Buni to'g'riroq qilish uchun, qaysi oylar shartnomaga kiradi?
 
     payment_months_in_contract = set()
     current = contract_start
@@ -369,11 +407,12 @@ async def check_perform_transaction(params: dict, request_id: int, db: AsyncSess
             request_id
         )
 
-    # 4. Dublikat tekshiruvi - shu shartnoma uchun bu oy to'langanmi?
+    # 5. Dublikat tekshiruvi - shu shartnoma uchun bu oy va yil to'langanmi?
     duplicate = await db.execute(
         select(Transaction).where(
             Transaction.contract_id == contract.id,
             Transaction.status == PaymentStatus.SUCCESS,
+            Transaction.payment_year == payment_year,
             cast(Transaction.payment_months, JSONB).op('@>')(cast([payment_month], JSONB))
         )
     )
@@ -385,7 +424,7 @@ async def check_perform_transaction(params: dict, request_id: int, db: AsyncSess
         }
         return create_error_response(
             PaymeError.COULD_NOT_PERFORM,
-            f"Оплата за {month_names[payment_month]} уже существует",
+            f"Оплата за {month_names[payment_month]} {payment_year} года уже существует",
             request_id
         )
 
@@ -394,16 +433,7 @@ async def check_perform_transaction(params: dict, request_id: int, db: AsyncSess
 
 async def create_transaction(params: dict, request_id: int, db: AsyncSession):
     """
-    Yangi tranzaksiya yaratish
-
-    Parametrlar:
-    - id: Payme transaction ID
-    - time: Tranzaksiya vaqti
-    - amount: To'lov summasi (tiyin)
-    - account:
-      - contract: Shartnoma raqami
-      - year: Shartnoma yili
-      - payment_month: To'lov oyi
+    ✅ Yangi tranzaksiya yaratish
     """
     payme_id = params.get("id")
     time = params.get("time")
@@ -416,27 +446,30 @@ async def create_transaction(params: dict, request_id: int, db: AsyncSession):
         )
 
     contract_number = account.get("contract")
-    year = account.get("year")
+    archive_year = account.get("archive_year")
     payment_month = account.get("payment_month")
+    payment_year = account.get("payment_year")
 
-    if not contract_number or not year or not payment_month:
+    if not all([contract_number, archive_year, payment_month, payment_year]):
         return create_error_response(
             PaymeError.INVALID_PARAMS,
-            "Номер договора, год и месяц обязательны",
+            "Номер договора, archive_year, payment_month и payment_year обязательны",
             request_id
         )
 
     try:
-        year = int(year)
+        archive_year = int(archive_year)
         payment_month = int(payment_month)
+        payment_year = int(payment_year)
     except (TypeError, ValueError):
         return create_error_response(
             PaymeError.INVALID_PARAMS, "Неверные параметры", request_id
         )
 
-    print(f"🔍 CreateTransaction: payme_id={payme_id}, contract={contract_number}, year={year}, month={payment_month}")
+    print(
+        f"🔍 CreateTransaction: payme_id={payme_id}, contract={contract_number}, archive_year={archive_year}, payment_month={payment_month}, payment_year={payment_year}")
 
-    # 1. Shu payme_id bilan tranzaksiya bormi? (Idempotency)
+    # 1. Idempotency - shu payme_id bilan tranzaksiya bormi?
     existing_result = await db.execute(
         select(Transaction).where(Transaction.external_id == str(payme_id))
     )
@@ -487,11 +520,11 @@ async def create_transaction(params: dict, request_id: int, db: AsyncSession):
             request_id
         )
 
-    # 2. Shartnomani topish (contract_number + archive_year)
+    # 2. Shartnomani topish
     contract_result = await db.execute(
         select(Contract).where(
             Contract.contract_number == contract_number,
-            Contract.archive_year == year
+            Contract.archive_year == archive_year
         )
     )
     contract = contract_result.scalar_one_or_none()
@@ -501,14 +534,22 @@ async def create_transaction(params: dict, request_id: int, db: AsyncSession):
             "error": {
                 "code": -31050,
                 "message": {
-                    "ru": f"Договор {contract_number} за {year} год не найден",
-                    "uz": f"{contract_number} shartnoma {year} yil uchun topilmadi",
-                    "en": f"Contract {contract_number} for year {year} not found"
+                    "ru": f"Договор {contract_number} за {archive_year} год не найден",
+                    "uz": f"{contract_number} shartnoma {archive_year} yil uchun topilmadi",
+                    "en": f"Contract {contract_number} for year {archive_year} not found"
                 },
                 "data": "account.contract"
             },
             "id": request_id
         }
+
+    # Status tekshiruvi
+    if contract.status == ContractStatus.DELETED:
+        return create_error_response(
+            PaymeError.COULD_NOT_PERFORM,
+            "Договор удален",
+            request_id
+        )
 
     # 3. Summani tekshirish
     amount_sum = float(amount)
@@ -517,7 +558,7 @@ async def create_transaction(params: dict, request_id: int, db: AsyncSession):
     if amount_sum != expected_amount:
         return create_error_response(
             PaymeError.INVALID_AMOUNT,
-            f"Сумма должна быть {expected_amount}",
+            f"Сумма должна быть {int(expected_amount)}",
             request_id
         )
 
@@ -526,6 +567,7 @@ async def create_transaction(params: dict, request_id: int, db: AsyncSession):
         select(Transaction).where(
             Transaction.contract_id == contract.id,
             Transaction.status == PaymentStatus.PENDING,
+            Transaction.payment_year == payment_year,
             cast(Transaction.payment_months, JSONB).op('@>')(cast([payment_month], JSONB)),
             Transaction.external_id != str(payme_id)
         )
@@ -549,13 +591,14 @@ async def create_transaction(params: dict, request_id: int, db: AsyncSession):
         select(Transaction).where(
             Transaction.contract_id == contract.id,
             Transaction.status == PaymentStatus.SUCCESS,
+            Transaction.payment_year == payment_year,
             cast(Transaction.payment_months, JSONB).op('@>')(cast([payment_month], JSONB))
         )
     )
     if success_payment.scalar_one_or_none():
         return create_error_response(
             PaymeError.COULD_NOT_PERFORM,
-            f"Оплата за месяц {payment_month} уже существует",
+            f"Оплата за месяц {payment_month}/{payment_year} уже существует",
             request_id
         )
 
@@ -567,9 +610,9 @@ async def create_transaction(params: dict, request_id: int, db: AsyncSession):
         status=PaymentStatus.PENDING,
         contract_id=contract.id,
         student_id=contract.student_id,
-        payment_year=year,  # ✅ Shartnoma yili
+        payment_year=payment_year,
         payment_months=[payment_month],
-        comment=f"Payme: contract {contract_number}, year {year}, month {payment_month}"
+        comment=f"Payme: contract {contract_number} (archive {archive_year}), payment for {payment_month}/{payment_year}"
     )
 
     db.add(transaction)
@@ -597,7 +640,10 @@ async def create_transaction(params: dict, request_id: int, db: AsyncSession):
         request_id
     )
 
+
+
 async def perform_transaction(params: dict, request_id: int, db: AsyncSession):
+    """Tranzaksiyani tasdiqlash"""
     payme_id = params.get("id")
 
     if not payme_id:
@@ -656,7 +702,7 @@ async def perform_transaction(params: dict, request_id: int, db: AsyncSession):
     if contract.status == ContractStatus.DELETED:
         return create_error_response(
             PaymeError.COULD_NOT_PERFORM,
-            "Абонент не найден",
+            "Договор удален",
             request_id
         )
 
@@ -703,6 +749,8 @@ async def perform_transaction(params: dict, request_id: int, db: AsyncSession):
         },
         request_id
     )
+
+
 
 
 async def check_transaction(params: dict, request_id: int, db: AsyncSession):
