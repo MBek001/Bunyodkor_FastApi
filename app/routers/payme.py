@@ -357,13 +357,13 @@ async def create_transaction(params: dict, request_id: int, db: AsyncSession):
             request_id
         )
 
-    amount_sum = amount / 100
-    min_amount = float(contract.monthly_fee)
+    amount_sum = float(amount)
+    expected_amount = float(contract.monthly_fee)
 
-    if amount_sum < min_amount:
+    if amount_sum != expected_amount:
         return create_error_response(
             PaymeError.INVALID_AMOUNT,
-            f"Неверная сумма оплаты. Минимум: {min_amount}",
+            f"Сумма оплаты должна быть ровно {expected_amount}",
             request_id
         )
 
