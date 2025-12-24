@@ -665,10 +665,6 @@ async def check_transaction(params: dict, request_id: int, db: AsyncSession):
 
     transaction = transaction_result.scalar_one_or_none()
 
-    print(f"🔍 Transaction found: {transaction}")
-    print(f"🔍 Transaction ID: {transaction.id if transaction else 'None'}")
-    print(f"🔍 Transaction external_id: {transaction.external_id if transaction else 'None'}")
-
     if not transaction:
         print(f"❌ Transaction NOT FOUND for payme_id: {payme_id}")
         return create_error_response(
@@ -677,12 +673,7 @@ async def check_transaction(params: dict, request_id: int, db: AsyncSession):
             request_id
         )
 
-    # State mapping:
-    # 1 = PENDING (created, not performed)
-    # 2 = SUCCESS (performed)
-    # -1 = PENDING_CANCEL (cancel requested)
-    # -2 = CANCELLED (cancelled)
-
+    # State 2 = SUCCESS (performed)
     if transaction.status == PaymentStatus.SUCCESS:
         return create_success_response(
             {
@@ -696,11 +687,18 @@ async def check_transaction(params: dict, request_id: int, db: AsyncSession):
             request_id
         )
 
+    # State -2 = CANCELLED
     if transaction.status == PaymentStatus.CANCELLED:
+        # ✅ Agar tranzaksiya SUCCESS bo'lganidan keyin CANCELLED bo'lgan bo'lsa
+        # perform_time ni qaytaramiz, aks holda 0
+        perform_time = 0
+        if transaction.paid_at:
+            perform_time = int(transaction.paid_at.timestamp() * 1000)
+
         return create_success_response(
             {
                 "create_time": int(transaction.created_at.timestamp() * 1000),
-                "perform_time": 0,
+                "perform_time": perform_time,
                 "cancel_time": int(transaction.updated_at.timestamp() * 1000) if transaction.updated_at else 0,
                 "transaction": str(transaction.id),
                 "state": -2,
@@ -709,7 +707,7 @@ async def check_transaction(params: dict, request_id: int, db: AsyncSession):
             request_id
         )
 
-    # PENDING state
+    # State 1 = PENDING
     return create_success_response(
         {
             "create_time": int(transaction.created_at.timestamp() * 1000),
@@ -749,12 +747,16 @@ async def cancel_transaction(params: dict, request_id: int, db: AsyncSession):
             request_id
         )
 
-    # Agar allaqachon bekor qilingan bo'lsa
+    # ✅ Agar allaqachon bekor qilingan bo'lsa
     if transaction.status == PaymentStatus.CANCELLED:
+        perform_time = 0
+        if transaction.paid_at:
+            perform_time = int(transaction.paid_at.timestamp() * 1000)
+
         return create_success_response(
             {
                 "create_time": int(transaction.created_at.timestamp() * 1000),
-                "perform_time": 0,
+                "perform_time": perform_time,
                 "cancel_time": int(transaction.updated_at.timestamp() * 1000) if transaction.updated_at else 0,
                 "transaction": str(transaction.id),
                 "state": -2,
@@ -763,11 +765,10 @@ async def cancel_transaction(params: dict, request_id: int, db: AsyncSession):
             request_id
         )
 
-    # SUCCESS holatida bekor qilish mumkin emas
-    if transaction.status == PaymentStatus.SUCCESS:
-        # Lekin Payme protokoli bo'yicha SUCCESS'ni ham bekor qilish mumkin
-        # Bu sizning biznes logikangizga bog'liq
-        pass
+    # ✅ Agar SUCCESS holatida bo'lsa, perform_time ni saqlaymiz
+    perform_time = 0
+    if transaction.status == PaymentStatus.SUCCESS and transaction.paid_at:
+        perform_time = int(transaction.paid_at.timestamp() * 1000)
 
     # Bekor qilish
     transaction.status = PaymentStatus.CANCELLED
@@ -778,7 +779,7 @@ async def cancel_transaction(params: dict, request_id: int, db: AsyncSession):
     return create_success_response(
         {
             "create_time": int(transaction.created_at.timestamp() * 1000),
-            "perform_time": 0,
+            "perform_time": perform_time,
             "cancel_time": int(transaction.updated_at.timestamp() * 1000),
             "transaction": str(transaction.id),
             "state": -2,
