@@ -113,6 +113,9 @@ async def payme_payment(
     elif method == "GetStatement":
         return await get_statement(params, request, request_id, db)
 
+    elif method == "ChangePassword":
+        return await change_password(params, request, request_id, db)
+
     else:
         return create_error_response(
             PaymeError.METHOD_NOT_FOUND,
@@ -764,5 +767,28 @@ async def get_statement(params: dict, request: Request, request_id: int, db: Asy
 
     return create_success_response(
         {"transactions": transactions_list},
+        request_id
+    )
+
+
+async def change_password(params: dict, request: Request, request_id: int, db: AsyncSession):
+    if not check_authorization(request):
+        return create_error_response(
+            PaymeError.INVALID_AUTHORIZATION,
+            "Недостаточно привилегий",
+            request_id
+        )
+
+    password = params.get("password")
+
+    if not password:
+        return create_error_response(
+            PaymeError.INVALID_PARAMS,
+            "Неверные параметры",
+            request_id
+        )
+
+    return create_success_response(
+        {"success": True},
         request_id
     )
