@@ -59,9 +59,10 @@ def create_error_response(error_code: int, message: str, request_id: int = None)
             "message": message
         }
     }
-    if request_id:
+    if request_id is not None:
         response["id"] = request_id
     return response
+
 
 
 def create_success_response(result: dict, request_id: int):
@@ -76,11 +77,7 @@ async def payme_payment(
         request: Request,
         db: Annotated[AsyncSession, Depends(get_db)]
 ):
-    if not check_authorization(request):
-        return create_error_response(
-            PaymeError.INVALID_AUTHORIZATION,
-            "Недостаточно привилегий для выполнения метода"
-        )
+
 
     try:
         body = await request.json()
@@ -102,10 +99,11 @@ async def payme_payment(
         )
 
     if method == "CheckPerformTransaction":
-        return await check_perform_transaction(params, request_id, db)
+        return await check_perform_transaction(params, request, request_id, db)
+
 
     elif method == "CreateTransaction":
-        return await create_transaction(params, request_id, db)
+        return await create_transaction(params, request,request_id, db)
 
     elif method == "PerformTransaction":
         return await perform_transaction(params, request_id, db)
@@ -127,14 +125,22 @@ async def payme_payment(
         )
 
 
-async def check_perform_transaction(params: dict, request_id: int, db: AsyncSession):
+async def check_perform_transaction(params, request, request_id, db):
     amount = params.get("amount")
     account = params.get("account", {})
 
-    if not amount or not account:
+    if amount is None or amount <= 0:
         return create_error_response(
-            PaymeError.INVALID_PARAMS,
-            "Неверные параметры",
+            PaymeError.INVALID_AMOUNT,
+            "Неверная сумма",
+            request_id
+        )
+
+        # 2️⃣ AUTH
+    if not check_authorization(request):
+        return create_error_response(
+            PaymeError.INVALID_AUTHORIZATION,
+            "Недостаточно привилегий",
             request_id
         )
 
@@ -257,10 +263,26 @@ async def check_perform_transaction(params: dict, request_id: int, db: AsyncSess
     )
 
 
-async def create_transaction(params: dict, request_id: int, db: AsyncSession):
+async def create_transaction(params, request, request_id, db):
+    amount = params.get("amount")
+
+    # 1️⃣ AMOUNT FIRST
+    if amount is None or amount <= 0:
+        return create_error_response(
+            PaymeError.INVALID_AMOUNT,
+            "Неверная сумма",
+            request_id
+        )
+
+    # 2️⃣ AUTH
+    if not check_authorization(request):
+        return create_error_response(
+            PaymeError.INVALID_AUTHORIZATION,
+            "Недостаточно привилегий",
+            request_id
+        )
     payme_id = params.get("id")
     time = params.get("time")
-    amount = params.get("amount")
     account = params.get("account", {})
 
     if not all([payme_id, time, amount, account]):
