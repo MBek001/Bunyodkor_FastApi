@@ -355,11 +355,18 @@ async def create_transaction(params: dict, request_id: int, db: AsyncSession):
     contract = contract_result.scalar_one_or_none()
 
     if not contract:
-        return create_error_response(
-            PaymeError.INVALID_ACCOUNT,
-            "Абонент не найден",
-            request_id
-        )
+        return {
+            "error": {
+                "code": -31050,
+                "message": {
+                    "ru": "Абонент с таким номером договора не найден",
+                    "uz": "Bunday shartnoma raqamli abonent topilmadi",
+                    "en": "Contract not found"
+                },
+                "data": "account.contract"
+            },
+            "id": request_id
+        }
 
     if contract.status == ContractStatus.DELETED:
         return create_error_response(
