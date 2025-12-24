@@ -494,7 +494,7 @@ async def create_transaction(params: dict, request_id: int, db: AsyncSession):
 
     # ✅ 8. Create new transaction
     transaction = Transaction(
-        external_id=str(payme_id),
+        external_id=str(payme_id),  # ✅ Bu muhim!
         amount=amount_sum,
         source=PaymentSource.PAYME,
         status=PaymentStatus.PENDING,
@@ -506,8 +506,21 @@ async def create_transaction(params: dict, request_id: int, db: AsyncSession):
     )
 
     db.add(transaction)
-    await db.commit()
-    await db.refresh(transaction)
+
+    try:
+        await db.commit()  # ✅ Commit qiling
+        await db.refresh(transaction)  # ✅ Refresh qiling
+
+        print(f"✅ Transaction created: ID={transaction.id}, external_id={transaction.external_id}")
+
+    except Exception as e:
+        await db.rollback()
+        print(f"❌ Transaction creation failed: {e}")
+        return create_error_response(
+            PaymeError.COULD_NOT_PERFORM,
+            "Ошибка создания транзакции",
+            request_id
+        )
 
     return create_success_response(
         {
