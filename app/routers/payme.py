@@ -428,11 +428,10 @@ async def create_transaction(params: dict, request_id: int, db: AsyncSession):
         )
 
     contract_number = account.get("contract")
-    archive_year = account.get("archive_year")
     payment_month = account.get("payment_month")
     payment_year = account.get("payment_year")
 
-    if not all([contract_number, archive_year, payment_month, payment_year]):
+    if not all([contract_number, payment_month, payment_year]):
         return create_error_response(
             PaymeError.INVALID_PARAMS,
             "Номер договора, archive_year, payment_month и payment_year обязательны",
@@ -440,7 +439,7 @@ async def create_transaction(params: dict, request_id: int, db: AsyncSession):
         )
 
     try:
-        archive_year = int(archive_year)
+
         payment_month = int(payment_month)
         payment_year = int(payment_year)
     except (TypeError, ValueError):
@@ -449,7 +448,7 @@ async def create_transaction(params: dict, request_id: int, db: AsyncSession):
         )
 
     print(
-        f"🔍 CreateTransaction: payme_id={payme_id}, contract={contract_number}, archive_year={archive_year}, payment_month={payment_month}, payment_year={payment_year}")
+        f"🔍 CreateTransaction: payme_id={payme_id}, contract={contract_number}, payment_month={payment_month}, payment_year={payment_year}")
 
     # 1. Idempotency - shu payme_id bilan tranzaksiya bormi?
     existing_result = await db.execute(
@@ -506,7 +505,7 @@ async def create_transaction(params: dict, request_id: int, db: AsyncSession):
     contract_result = await db.execute(
         select(Contract).where(
             Contract.contract_number == contract_number,
-            Contract.archive_year == archive_year
+            Contract.archive_year == payment_year
         )
     )
     contract = contract_result.scalar_one_or_none()
@@ -516,9 +515,9 @@ async def create_transaction(params: dict, request_id: int, db: AsyncSession):
             "error": {
                 "code": -31050,
                 "message": {
-                    "ru": f"Договор {contract_number} за {archive_year} год не найден",
-                    "uz": f"{contract_number} shartnoma {archive_year} yil uchun topilmadi",
-                    "en": f"Contract {contract_number} for year {archive_year} not found"
+                    "ru": f"Договор {contract_number}  год не найден",
+                    "uz": f"{contract_number}  yil uchun topilmadi",
+                    "en": f"Contract {contract_number} for not found"
                 },
                 "data": "account.contract"
             },
@@ -594,7 +593,7 @@ async def create_transaction(params: dict, request_id: int, db: AsyncSession):
         student_id=contract.student_id,
         payment_year=payment_year,
         payment_months=[payment_month],
-        comment=f"Payme: contract {contract_number} (archive {archive_year}), payment for {payment_month}/{payment_year}"
+        comment=f"Payme: contract {contract_number} ), payment for {payment_month}/{payment_year}"
     )
 
     db.add(transaction)
