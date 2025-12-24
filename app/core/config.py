@@ -9,7 +9,7 @@ class Settings(BaseSettings):
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 43200
 
     PAYME_MERCHANT_ID: str = ""
-    PAYME_SECRET_KEY: str = ""
+    PAYME_KEY: str = ""
     PAYME_CALLBACK_URL: str = ""
 
     CLICK_MERCHANT_ID: str = ""
