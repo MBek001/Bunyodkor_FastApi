@@ -299,17 +299,16 @@ async def create_transaction(params: dict, request_id: int, db: AsyncSession):
             request_id
         )
 
-    # ✅ 1. Shu payme_id bilan tranzaksiya bormi tekshiramiz
+    # ✅ 1. Check if transaction with this payme_id already exists
     existing_result = await db.execute(
         select(Transaction).where(
             Transaction.external_id == str(payme_id)
         )
     )
-    existing = existing_result.first()
+    existing = existing_result.scalar_one_or_none()
 
+    # If transaction already exists, return its current state
     if existing:
-        existing = existing[0]
-
         if existing.status == PaymentStatus.SUCCESS:
             return create_success_response(
                 {
@@ -319,16 +318,6 @@ async def create_transaction(params: dict, request_id: int, db: AsyncSession):
                     "transaction": str(existing.id),
                     "state": 2,
                     "reason": None
-                },
-                request_id
-            )
-
-        if existing.status == PaymentStatus.PENDING:
-            return create_success_response(
-                {
-                    "create_time": int(existing.created_at.timestamp() * 1000),
-                    "transaction": str(existing.id),
-                    "state": 1
                 },
                 request_id
             )
@@ -346,7 +335,7 @@ async def create_transaction(params: dict, request_id: int, db: AsyncSession):
                 request_id
             )
 
-        # PENDING holatida
+        # PENDING state
         return create_success_response(
             {
                 "create_time": int(existing.created_at.timestamp() * 1000),
@@ -359,13 +348,12 @@ async def create_transaction(params: dict, request_id: int, db: AsyncSession):
             request_id
         )
 
-    # ✅ 2. Shartnomani tekshiramiz
+    # ✅ 2. Verify contract exists
     contract_result = await db.execute(
         select(Contract).where(Contract.contract_number == contract_number)
     )
     contract = contract_result.scalar_one_or_none()
 
-    # 🚨 Agar shartnoma topilmasa, Payme spetsifikatsiyasiga mos xato qaytaramiz
     if not contract:
         return {
             "error": {
@@ -380,7 +368,6 @@ async def create_transaction(params: dict, request_id: int, db: AsyncSession):
             "id": request_id
         }
 
-    # 🚨 Agar shartnoma holati yaroqsiz (masalan, bekor qilingan) bo‘lsa
     if contract.status == ContractStatus.DELETED:
         return {
             "error": {
@@ -395,7 +382,7 @@ async def create_transaction(params: dict, request_id: int, db: AsyncSession):
             "id": request_id
         }
 
-    # ✅ 3. Summani tekshiramiz
+    # ✅ 3. Verify amount
     amount_sum = float(amount)
     expected_amount = float(contract.monthly_fee)
 
@@ -406,18 +393,33 @@ async def create_transaction(params: dict, request_id: int, db: AsyncSession):
             request_id
         )
 
-    payment_year = account.get("payment_year", datetime.now().year)
-    payment_month = account.get("payment_month", datetime.now().month)
+    # ✅ 4. Get payment month/year
+    payment_year = account.get("payment_year")
+    payment_month = account.get("payment_month")
 
-    try:
-        payment_year = int(payment_year)
-        payment_month = int(payment_month)
-    except (TypeError, ValueError):
-        return create_error_response(
-            PaymeError.INVALID_PARAMS,
-            "Неверные параметры месяца/года",
-            request_id
-        )
+    if payment_year is not None:
+        try:
+            payment_year = int(payment_year)
+        except (TypeError, ValueError):
+            return create_error_response(
+                PaymeError.INVALID_PARAMS,
+                "Неверный год оплаты",
+                request_id
+            )
+    else:
+        payment_year = datetime.now().year
+
+    if payment_month is not None:
+        try:
+            payment_month = int(payment_month)
+        except (TypeError, ValueError):
+            return create_error_response(
+                PaymeError.INVALID_PARAMS,
+                "Неверный месяц оплаты",
+                request_id
+            )
+    else:
+        payment_month = datetime.now().month
 
     if not (1 <= payment_month <= 12):
         return create_error_response(
@@ -426,6 +428,7 @@ async def create_transaction(params: dict, request_id: int, db: AsyncSession):
             request_id
         )
 
+    # ✅ 5. Check contract dates
     from datetime import date as date_class
     payment_date = date_class(payment_year, payment_month, 1)
     contract_start_month = date_class(contract.start_date.year, contract.start_date.month, 1)
@@ -438,25 +441,26 @@ async def create_transaction(params: dict, request_id: int, db: AsyncSession):
             request_id
         )
 
-    # ✅ 4. FAQAT SUCCESS tranzaksiya tekshirish (PENDING EMAS!)
-    # 4. SUCCESS yoki PENDING holatlar uchun dublikat tekshiruvi
-    duplicate_check = await db.execute(
+    # ✅ 6. Check for OTHER pending transactions for same month (not this payme_id)
+    # Only block if there's a DIFFERENT pending transaction
+    other_pending_check = await db.execute(
         select(Transaction).where(
             Transaction.contract_id == contract.id,
-            Transaction.status.in_([PaymentStatus.SUCCESS, PaymentStatus.PENDING]),
+            Transaction.status == PaymentStatus.PENDING,
             Transaction.payment_year == payment_year,
-            cast(Transaction.payment_months, JSONB).op('@>')(cast([payment_month], JSONB))
+            cast(Transaction.payment_months, JSONB).op('@>')(cast([payment_month], JSONB)),
+            Transaction.external_id != str(payme_id)  # Different transaction
         )
     )
-    duplicate = duplicate_check.first()
+    other_pending = other_pending_check.scalar_one_or_none()
 
-    if duplicate:
+    if other_pending:
         return {
             "error": {
                 "code": -31050,
                 "message": {
                     "ru": "Для данного договора уже существует активная транзакция ожидания оплаты",
-                    "uz": "Ushbu shartnoma uchun to‘lov kutilayotgan tranzaksiya mavjud",
+                    "uz": "Ushbu shartnoma uchun to'lov kutilayotgan tranzaksiya mavjud",
                     "en": "An active pending transaction already exists for this contract"
                 },
                 "data": "account.contract"
@@ -464,7 +468,30 @@ async def create_transaction(params: dict, request_id: int, db: AsyncSession):
             "id": request_id
         }
 
-    # ✅ 5. Yangi tranzaksiya yaratamiz
+    # ✅ 7. Check for successful payment for same month
+    success_check = await db.execute(
+        select(Transaction).where(
+            Transaction.contract_id == contract.id,
+            Transaction.status == PaymentStatus.SUCCESS,
+            Transaction.payment_year == payment_year,
+            cast(Transaction.payment_months, JSONB).op('@>')(cast([payment_month], JSONB))
+        )
+    )
+    success_payment = success_check.scalar_one_or_none()
+
+    if success_payment:
+        month_names = {
+            1: "январь", 2: "февраль", 3: "март", 4: "апрель",
+            5: "май", 6: "июнь", 7: "июль", 8: "август",
+            9: "сентябрь", 10: "октябрь", 11: "ноябрь", 12: "декабрь"
+        }
+        return create_error_response(
+            PaymeError.COULD_NOT_PERFORM,
+            f"Оплата за {month_names[payment_month]} {payment_year} уже существует",
+            request_id
+        )
+
+    # ✅ 8. Create new transaction
     transaction = Transaction(
         external_id=str(payme_id),
         amount=amount_sum,
