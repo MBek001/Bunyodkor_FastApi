@@ -22,6 +22,7 @@ from app.routers import (
     uploads,
     archive,
     click,
+    payme,
 )
 from app.services.backup import backup_service
 from app.core.config import settings as app_settings
@@ -111,6 +112,7 @@ app.include_router(waiting_list.router)
 app.include_router(uploads.router)
 app.include_router(archive.router)
 app.include_router(click.router)
+app.include_router(payme.router)
 
 
 if __name__ == "__main__":
