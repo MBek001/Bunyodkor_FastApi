@@ -566,9 +566,12 @@ async def perform_transaction(params: dict, request_id: int, db: AsyncSession):
         request_id
     )
 
+
 async def check_transaction(params: dict, request_id: int, db: AsyncSession):
     """Tranzaksiya holatini tekshirish"""
     payme_id = params.get("id")
+
+    print(f"🔍 CheckTransaction: Looking for payme_id = {payme_id}")
 
     if not payme_id:
         return create_error_response(
@@ -584,7 +587,12 @@ async def check_transaction(params: dict, request_id: int, db: AsyncSession):
     )
     transaction = transaction_result.scalar_one_or_none()
 
+    print(f"🔍 Transaction found: {transaction}")
+    print(f"🔍 Transaction ID: {transaction.id if transaction else 'None'}")
+    print(f"🔍 Transaction external_id: {transaction.external_id if transaction else 'None'}")
+
     if not transaction:
+        print(f"❌ Transaction NOT FOUND for payme_id: {payme_id}")
         return create_error_response(
             PaymeError.TRANSACTION_NOT_FOUND,
             "Транзакция не найдена",
