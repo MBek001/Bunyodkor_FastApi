@@ -304,7 +304,7 @@ async def create_transaction(params: dict, request_id: int, db: AsyncSession):
             Transaction.external_id == str(payme_id)
         )
     )
-    existing = existing_result.first()  # ✅ first() ishlatamiz
+    existing = existing_result.first()
 
     if existing:
         existing = existing[0]  # tuple dan Transaction obyektini olamiz
@@ -411,25 +411,43 @@ async def create_transaction(params: dict, request_id: int, db: AsyncSession):
             request_id
         )
 
-    # ✅ 4. BOSHQA tranzaksiyalar bilan dublikat tekshirish
-    duplicate_check = await db.execute(
+    # ✅ 4. PENDING tranzaksiya bormi tekshirish (YANGI QO'SHILDI)
+    pending_check = await db.execute(
         select(Transaction).where(
             Transaction.contract_id == contract.id,
-            Transaction.status == PaymentStatus.SUCCESS,  # ✅ CORRECT - only check successful payments
+            Transaction.status == PaymentStatus.PENDING,
             Transaction.payment_year == payment_year,
             cast(Transaction.payment_months, JSONB).op('@>')(cast([payment_month], JSONB))
         )
     )
-    duplicate = duplicate_check.first()  # ✅ first() ishlatamiz
+    pending_transaction = pending_check.first()
+
+    if pending_transaction:
+        return create_error_response(
+            PaymeError.COULD_NOT_PERFORM,
+            "Ushbu hisob uchun to'lov kutilmoqda",
+            request_id
+        )
+
+    # ✅ 5. SUCCESS tranzaksiya bormi tekshirish
+    duplicate_check = await db.execute(
+        select(Transaction).where(
+            Transaction.contract_id == contract.id,
+            Transaction.status == PaymentStatus.SUCCESS,
+            Transaction.payment_year == payment_year,
+            cast(Transaction.payment_months, JSONB).op('@>')(cast([payment_month], JSONB))
+        )
+    )
+    duplicate = duplicate_check.first()
 
     if duplicate:
         return create_error_response(
             PaymeError.COULD_NOT_PERFORM,
-            f"Оплата за этот месяц уже существует или ожидает подтверждения",
+            f"Оплата за этот месяц уже существует",
             request_id
         )
 
-    # ✅ 5. Yangi tranzaksiya yaratamiz
+    # ✅ 6. Yangi tranzaksiya yaratamiz
     transaction = Transaction(
         external_id=str(payme_id),
         amount=amount_sum,
@@ -457,7 +475,6 @@ async def create_transaction(params: dict, request_id: int, db: AsyncSession):
         },
         request_id
     )
-
 
 async def perform_transaction(params: dict, request_id: int, db: AsyncSession):
     payme_id = params.get("id")
