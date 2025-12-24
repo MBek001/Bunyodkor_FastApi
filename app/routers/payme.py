@@ -428,10 +428,11 @@ async def create_transaction(params: dict, request_id: int, db: AsyncSession):
         )
 
     # ✅ 4. FAQAT SUCCESS tranzaksiya tekshirish (PENDING EMAS!)
+    # 4. SUCCESS yoki PENDING holatlar uchun dublikat tekshiruvi
     duplicate_check = await db.execute(
         select(Transaction).where(
             Transaction.contract_id == contract.id,
-            Transaction.status == PaymentStatus.SUCCESS,  # ⚠️ Faqat SUCCESS!
+            Transaction.status.in_([PaymentStatus.SUCCESS, PaymentStatus.PENDING]),
             Transaction.payment_year == payment_year,
             cast(Transaction.payment_months, JSONB).op('@>')(cast([payment_month], JSONB))
         )
@@ -439,11 +440,18 @@ async def create_transaction(params: dict, request_id: int, db: AsyncSession):
     duplicate = duplicate_check.first()
 
     if duplicate:
-        return create_error_response(
-            PaymeError.COULD_NOT_PERFORM,
-            f"Оплата за этот месяц уже существует",
-            request_id
-        )
+        return {
+            "error": {
+                "code": -31050,
+                "message": {
+                    "ru": "Для данного договора уже существует активная транзакция ожидания оплаты",
+                    "uz": "Ushbu shartnoma uchun to‘lov kutilayotgan tranzaksiya mavjud",
+                    "en": "An active pending transaction already exists for this contract"
+                },
+                "data": "account.contract"
+            },
+            "id": request_id
+        }
 
     # ✅ 5. Yangi tranzaksiya yaratamiz
     transaction = Transaction(
