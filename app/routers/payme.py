@@ -291,7 +291,6 @@ async def create_transaction(params: dict, request_id: int, db: AsyncSession):
         )
 
     contract_number = account.get("contract")
-
     if not contract_number:
         return create_error_response(
             PaymeError.INVALID_PARAMS,
@@ -299,7 +298,9 @@ async def create_transaction(params: dict, request_id: int, db: AsyncSession):
             request_id
         )
 
-    # ✅ 1. Check if transaction with this payme_id already exists
+    print(f"🔍 CreateTransaction: payme_id={payme_id}, contract={contract_number}")
+
+    # ✅ 1. Shu payme_id bilan tranzaksiya bormi?
     existing_result = await db.execute(
         select(Transaction).where(
             Transaction.external_id == str(payme_id)
@@ -307,8 +308,9 @@ async def create_transaction(params: dict, request_id: int, db: AsyncSession):
     )
     existing = existing_result.scalar_one_or_none()
 
-    # If transaction already exists, return its current state
     if existing:
+        print(f"✅ Transaction already exists: id={existing.id}, status={existing.status}")
+
         if existing.status == PaymentStatus.SUCCESS:
             return create_success_response(
                 {
@@ -335,7 +337,7 @@ async def create_transaction(params: dict, request_id: int, db: AsyncSession):
                 request_id
             )
 
-        # PENDING state
+        # PENDING
         return create_success_response(
             {
                 "create_time": int(existing.created_at.timestamp() * 1000),
@@ -348,7 +350,7 @@ async def create_transaction(params: dict, request_id: int, db: AsyncSession):
             request_id
         )
 
-    # ✅ 2. Verify contract exists
+    # ✅ 2. Shartnomani tekshirish
     contract_result = await db.execute(
         select(Contract).where(Contract.contract_number == contract_number)
     )
@@ -382,7 +384,7 @@ async def create_transaction(params: dict, request_id: int, db: AsyncSession):
             "id": request_id
         }
 
-    # ✅ 3. Verify amount
+    # ✅ 3. Summani tekshirish
     amount_sum = float(amount)
     expected_amount = float(contract.monthly_fee)
 
@@ -393,7 +395,7 @@ async def create_transaction(params: dict, request_id: int, db: AsyncSession):
             request_id
         )
 
-    # ✅ 4. Get payment month/year
+    # ✅ 4. Oy va yilni olish
     payment_year = account.get("payment_year")
     payment_month = account.get("payment_month")
 
@@ -428,7 +430,9 @@ async def create_transaction(params: dict, request_id: int, db: AsyncSession):
             request_id
         )
 
-    # ✅ 5. Check contract dates
+    print(f"📅 Payment for: {payment_month}/{payment_year}")
+
+    # ✅ 5. Shartnoma sanalarini tekshirish
     from datetime import date as date_class
     payment_date = date_class(payment_year, payment_month, 1)
     contract_start_month = date_class(contract.start_date.year, contract.start_date.month, 1)
@@ -441,21 +445,20 @@ async def create_transaction(params: dict, request_id: int, db: AsyncSession):
             request_id
         )
 
-    # ✅ 6. Check for OTHER pending transactions for same month (not this payme_id)
-    # Only block if there's a DIFFERENT pending transaction
     # ✅ 6. BOSHQA pending tranzaksiyalarni tekshirish
-    other_pending_check = await db.execute(
+    other_pending_result = await db.execute(
         select(Transaction).where(
             Transaction.contract_id == contract.id,
             Transaction.status == PaymentStatus.PENDING,
             Transaction.payment_year == payment_year,
             cast(Transaction.payment_months, JSONB).op('@>')(cast([payment_month], JSONB)),
-            Transaction.external_id != str(payme_id)  # Boshqa tranzaksiya
+            Transaction.external_id != str(payme_id)
         )
     )
-    other_pending = other_pending_check.first()  # ✅ Bu yerda first() ishlatamiz
+    other_pending_list = other_pending_result.scalars().all()
 
-    if other_pending:
+    if other_pending_list:
+        print(f"⚠️ Found {len(other_pending_list)} other pending transactions")
         return {
             "error": {
                 "code": -31050,
@@ -469,8 +472,8 @@ async def create_transaction(params: dict, request_id: int, db: AsyncSession):
             "id": request_id
         }
 
-    # ✅ 7. Check for successful payment for same month
-    success_check = await db.execute(
+    # ✅ 7. SUCCESS to'lovni tekshirish
+    success_result = await db.execute(
         select(Transaction).where(
             Transaction.contract_id == contract.id,
             Transaction.status == PaymentStatus.SUCCESS,
@@ -478,7 +481,7 @@ async def create_transaction(params: dict, request_id: int, db: AsyncSession):
             cast(Transaction.payment_months, JSONB).op('@>')(cast([payment_month], JSONB))
         )
     )
-    success_payment = success_check.scalar_one_or_none()
+    success_payment = success_result.scalar_one_or_none()
 
     if success_payment:
         month_names = {
@@ -492,9 +495,9 @@ async def create_transaction(params: dict, request_id: int, db: AsyncSession):
             request_id
         )
 
-    # ✅ 8. Create new transaction
+    # ✅ 8. Yangi tranzaksiya yaratish
     transaction = Transaction(
-        external_id=str(payme_id),  # ✅ Bu muhim!
+        external_id=str(payme_id),
         amount=amount_sum,
         source=PaymentSource.PAYME,
         status=PaymentStatus.PENDING,
@@ -508,14 +511,12 @@ async def create_transaction(params: dict, request_id: int, db: AsyncSession):
     db.add(transaction)
 
     try:
-        await db.commit()  # ✅ Commit qiling
-        await db.refresh(transaction)  # ✅ Refresh qiling
-
-        print(f"✅ Transaction created: ID={transaction.id}, external_id={transaction.external_id}")
-
+        await db.commit()
+        await db.refresh(transaction)
+        print(f"✅ Transaction created: id={transaction.id}, external_id={transaction.external_id}")
     except Exception as e:
         await db.rollback()
-        print(f"❌ Transaction creation failed: {e}")
+        print(f"❌ Error creating transaction: {e}")
         return create_error_response(
             PaymeError.COULD_NOT_PERFORM,
             "Ошибка создания транзакции",
