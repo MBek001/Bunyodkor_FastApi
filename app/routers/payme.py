@@ -107,11 +107,7 @@ async def payme_payment(
     elif method == "CheckTransaction":
         return await check_transaction(params, request_id, db)
 
-    elif method == "GetStatement":
-        return await get_statement(params, request_id, db)
 
-    elif method == "ChangePassword":
-        return create_success_response({"success": True}, request_id)
 
     return create_error_response(
         PaymeError.METHOD_NOT_FOUND,
@@ -122,55 +118,6 @@ async def payme_payment(
 
 
 async def check_perform_transaction(params, request, request_id, db):
-    amount = params.get("amount")
-    account = params.get("account")
-
-    # 1️⃣ amount
-    if amount is None or not isinstance(amount, (int, float)) or amount <= 0:
-        return create_error_response(
-            PaymeError.INVALID_AMOUNT,
-            "Неверная сумма",
-            request_id
-        )
-
-    # 2️⃣ account
-    if not isinstance(account, dict):
-        return create_error_response(
-            PaymeError.INVALID_PARAMS,
-            "Неверные параметры",
-            request_id
-        )
-
-    contract_number = account.get("contract")
-    if not contract_number:
-        return create_error_response(
-            PaymeError.INVALID_PARAMS,
-            "Номер договора не указан",
-            request_id
-        )
-
-    # 3️⃣ contract
-    contract = (await db.execute(
-        select(Contract).where(Contract.contract_number == contract_number)
-    )).scalar_one_or_none()
-
-    if not contract or contract.status == ContractStatus.DELETED:
-        return create_error_response(
-            PaymeError.INVALID_ACCOUNT,
-            "Абонент не найден",
-            request_id
-        )
-
-    # 4️⃣ amount logic
-    amount_sum = amount / 100
-    if amount_sum < float(contract.monthly_fee):
-        return create_error_response(
-            PaymeError.INVALID_AMOUNT,
-            "Неверная сумма",
-            request_id
-        )
-
-    # 5️⃣ AUTH — FAQAT ENDI
     if not check_authorization(request):
         return create_error_response(
             PaymeError.INVALID_AUTHORIZATION,
@@ -178,56 +125,88 @@ async def check_perform_transaction(params, request, request_id, db):
             request_id
         )
 
-    return create_success_response({"allow": True}, request_id)
+    account = params.get("account", {})
+    contract_number = account.get("contract")
+    payment_year = account.get("payment_year")
 
+    if not contract_number or not payment_year:
+        return create_error_response(
+            PaymeError.INVALID_PARAMS,
+            "Номер договора или год не указан",
+            request_id
+        )
 
+    try:
+        payment_year = int(payment_year)
+    except ValueError:
+        return create_error_response(
+            PaymeError.INVALID_PARAMS,
+            "Неверный год",
+            request_id
+        )
+
+    contract = (
+        await db.execute(
+            select(Contract).where(
+                Contract.contract_number == contract_number,
+                Contract.status == ContractStatus.ACTIVE
+            )
+        )
+    ).scalar_one_or_none()
+
+    if not contract:
+        return create_error_response(
+            PaymeError.INVALID_ACCOUNT,
+            "Договор не найден",
+            request_id
+        )
+
+    expected_amount = int(contract.monthly_fee * 100)
+    incoming_amount = params.get("amount")
+
+    if incoming_amount != expected_amount:
+        return create_error_response(
+            PaymeError.INVALID_AMOUNT,
+            "Сумма должна быть равна месячной оплате",
+            request_id
+        )
+
+    payment_month = datetime.now().month
+
+    duplicate = (
+        await db.execute(
+            select(Transaction).where(
+                Transaction.contract_id == contract.id,
+                Transaction.payment_year == payment_year,
+                cast(Transaction.payment_months, JSONB).op("@>")(
+                    cast([payment_month], JSONB)
+                ),
+                Transaction.status == PaymentStatus.SUCCESS
+            )
+        )
+    ).scalar_one_or_none()
+
+    if duplicate:
+        return create_error_response(
+            PaymeError.COULD_NOT_PERFORM,
+            "Оплата за этот месяц уже произведена",
+            request_id
+        )
+
+    return create_success_response(
+        {
+            "allow": True,
+            "student": f"{contract.student.first_name} {contract.student.last_name}",
+            "monthly_fee": float(contract.monthly_fee),
+            "month": payment_month,
+            "year": payment_year
+        },
+        request_id
+    )
 
 
 
 async def create_transaction(params, request, request_id, db):
-    payme_id = params.get("id")
-    time = params.get("time")
-    amount = params.get("amount")
-    account = params.get("account")
-
-    # 1️⃣ params
-    if not all([payme_id, time, amount]) or not isinstance(account, dict):
-        return create_error_response(
-            PaymeError.INVALID_PARAMS,
-            "Неверные параметры",
-            request_id
-        )
-
-    # 2️⃣ contract
-    contract_number = account.get("contract")
-    if not contract_number:
-        return create_error_response(
-            PaymeError.INVALID_PARAMS,
-            "Номер договора не указан",
-            request_id
-        )
-
-    contract = (await db.execute(
-        select(Contract).where(Contract.contract_number == contract_number)
-    )).scalar_one_or_none()
-
-    if not contract or contract.status == ContractStatus.DELETED:
-        return create_error_response(
-            PaymeError.INVALID_ACCOUNT,
-            "Абонент не найден",
-            request_id
-        )
-
-    # 3️⃣ amount logic
-    amount_sum = amount / 100
-    if amount_sum < float(contract.monthly_fee):
-        return create_error_response(
-            PaymeError.INVALID_AMOUNT,
-            "Неверная сумма",
-            request_id
-        )
-
-    # 4️⃣ AUTH — ENG OXIRIDA
     if not check_authorization(request):
         return create_error_response(
             PaymeError.INVALID_AUTHORIZATION,
@@ -235,16 +214,29 @@ async def create_transaction(params, request, request_id, db):
             request_id
         )
 
-    # 5️⃣ transaction create
+    payme_id = params.get("id")
+    account = params.get("account", {})
+
+    contract_number = account.get("contract")
+    payment_year = int(account.get("payment_year"))
+    payment_month = datetime.now().month
+
+    contract = (
+        await db.execute(
+            select(Contract).where(Contract.contract_number == contract_number)
+        )
+    ).scalar_one()
+
     transaction = Transaction(
         external_id=str(payme_id),
-        amount=amount_sum,
+        amount=contract.monthly_fee,
         source=PaymentSource.PAYME,
         status=PaymentStatus.PENDING,
         contract_id=contract.id,
         student_id=contract.student_id,
-        payment_year=datetime.now().year,
-        payment_months=[datetime.now().month]
+        payment_year=payment_year,
+        payment_months=[payment_month],
+        comment="Monthly tuition payment"
     )
 
     db.add(transaction)
@@ -262,9 +254,6 @@ async def create_transaction(params, request, request_id, db):
         },
         request_id
     )
-
-
-
 
 
 async def perform_transaction(params: dict, request: Request, request_id: int, db: AsyncSession):
@@ -507,104 +496,104 @@ async def check_transaction(params: dict, request: Request, request_id: int, db:
     )
 
 
-async def get_statement(params: dict, request: Request, request_id: int, db: AsyncSession):
-    if not check_authorization(request):
-        return create_error_response(
-            PaymeError.INVALID_AUTHORIZATION,
-            "Недостаточно привилегий",
-            request_id
-        )
+# async def get_statement(params: dict, request: Request, request_id: int, db: AsyncSession):
+#     if not check_authorization(request):
+#         return create_error_response(
+#             PaymeError.INVALID_AUTHORIZATION,
+#             "Недостаточно привилегий",
+#             request_id
+#         )
+#
+#     from_time = params.get("from")
+#     to_time = params.get("to")
+#
+#     if not from_time or not to_time:
+#         return create_error_response(
+#             PaymeError.INVALID_PARAMS,
+#             "Неверные параметры",
+#             request_id
+#         )
+#
+#     try:
+#         from_date = datetime.fromtimestamp(from_time / 1000)
+#         to_date = datetime.fromtimestamp(to_time / 1000)
+#     except (ValueError, OSError):
+#         return create_error_response(
+#             PaymeError.INVALID_PARAMS,
+#             "Неверные параметры времени",
+#             request_id
+#         )
+#
+#     transactions_result = await db.execute(
+#         select(Transaction).where(
+#             Transaction.source == PaymentSource.PAYME,
+#             Transaction.created_at >= from_date,
+#             Transaction.created_at < to_date
+#         ).order_by(Transaction.created_at)
+#     )
+#     transactions = transactions_result.scalars().all()
+#
+#     transactions_list = []
+#
+#     for transaction in transactions:
+#         if transaction.status == PaymentStatus.SUCCESS:
+#             state = 2
+#         elif transaction.status == PaymentStatus.CANCELLED:
+#             state = -2
+#         elif transaction.status == PaymentStatus.FAILED:
+#             state = -1
+#         else:
+#             state = 1
+#
+#         contract_result = await db.execute(
+#             select(Contract).where(Contract.id == transaction.contract_id)
+#         )
+#         contract = contract_result.scalar_one_or_none()
+#
+#         transaction_data = {
+#             "id": transaction.external_id,
+#             "time": int(transaction.created_at.timestamp() * 1000),
+#             "amount": int(transaction.amount * 100),
+#             "account": {
+#                 "contract": contract.contract_number if contract else "",
+#                 "payment_month": transaction.payment_months[0] if transaction.payment_months else None,
+#                 "payment_year": transaction.payment_year
+#             },
+#             "create_time": int(transaction.created_at.timestamp() * 1000),
+#             "perform_time": int(transaction.paid_at.timestamp() * 1000) if transaction.paid_at else 0,
+#             "cancel_time": int(
+#                 transaction.updated_at.timestamp() * 1000) if transaction.status == PaymentStatus.CANCELLED and transaction.updated_at else 0,
+#             "transaction": str(transaction.id),
+#             "state": state,
+#             "reason": None
+#         }
+#
+#         transactions_list.append(transaction_data)
+#
+#     return create_success_response(
+#         {"transactions": transactions_list},
+#         request_id
+#     )
 
-    from_time = params.get("from")
-    to_time = params.get("to")
 
-    if not from_time or not to_time:
-        return create_error_response(
-            PaymeError.INVALID_PARAMS,
-            "Неверные параметры",
-            request_id
-        )
-
-    try:
-        from_date = datetime.fromtimestamp(from_time / 1000)
-        to_date = datetime.fromtimestamp(to_time / 1000)
-    except (ValueError, OSError):
-        return create_error_response(
-            PaymeError.INVALID_PARAMS,
-            "Неверные параметры времени",
-            request_id
-        )
-
-    transactions_result = await db.execute(
-        select(Transaction).where(
-            Transaction.source == PaymentSource.PAYME,
-            Transaction.created_at >= from_date,
-            Transaction.created_at < to_date
-        ).order_by(Transaction.created_at)
-    )
-    transactions = transactions_result.scalars().all()
-
-    transactions_list = []
-
-    for transaction in transactions:
-        if transaction.status == PaymentStatus.SUCCESS:
-            state = 2
-        elif transaction.status == PaymentStatus.CANCELLED:
-            state = -2
-        elif transaction.status == PaymentStatus.FAILED:
-            state = -1
-        else:
-            state = 1
-
-        contract_result = await db.execute(
-            select(Contract).where(Contract.id == transaction.contract_id)
-        )
-        contract = contract_result.scalar_one_or_none()
-
-        transaction_data = {
-            "id": transaction.external_id,
-            "time": int(transaction.created_at.timestamp() * 1000),
-            "amount": int(transaction.amount * 100),
-            "account": {
-                "contract": contract.contract_number if contract else "",
-                "payment_month": transaction.payment_months[0] if transaction.payment_months else None,
-                "payment_year": transaction.payment_year
-            },
-            "create_time": int(transaction.created_at.timestamp() * 1000),
-            "perform_time": int(transaction.paid_at.timestamp() * 1000) if transaction.paid_at else 0,
-            "cancel_time": int(
-                transaction.updated_at.timestamp() * 1000) if transaction.status == PaymentStatus.CANCELLED and transaction.updated_at else 0,
-            "transaction": str(transaction.id),
-            "state": state,
-            "reason": None
-        }
-
-        transactions_list.append(transaction_data)
-
-    return create_success_response(
-        {"transactions": transactions_list},
-        request_id
-    )
-
-
-async def change_password(params: dict, request: Request, request_id: int, db: AsyncSession):
-    if not check_authorization(request):
-        return create_error_response(
-            PaymeError.INVALID_AUTHORIZATION,
-            "Недостаточно привилегий",
-            request_id
-        )
-
-    password = params.get("password")
-
-    if not password:
-        return create_error_response(
-            PaymeError.INVALID_PARAMS,
-            "Неверные параметры",
-            request_id
-        )
-
-    return create_success_response(
-        {"success": True},
-        request_id
-    )
+# async def change_password(params: dict, request: Request, request_id: int, db: AsyncSession):
+#     if not check_authorization(request):
+#         return create_error_response(
+#             PaymeError.INVALID_AUTHORIZATION,
+#             "Недостаточно привилегий",
+#             request_id
+#         )
+#
+#     password = params.get("password")
+#
+#     if not password:
+#         return create_error_response(
+#             PaymeError.INVALID_PARAMS,
+#             "Неверные параметры",
+#             request_id
+#         )
+#
+#     return create_success_response(
+#         {"success": True},
+#         request_id
+#     )
