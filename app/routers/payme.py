@@ -376,7 +376,7 @@ async def check_perform_transaction(params: dict, request_id: int, db: AsyncSess
 
     # 3. Summa tekshiruvi
     amount_sum = float(amount)
-    expected_amount = float(contract.monthly_fee * 100)
+    expected_amount = float(contract.monthly_fee)
 
     if amount_sum != expected_amount:
         return create_error_response(
@@ -553,7 +553,7 @@ async def create_transaction(params: dict, request_id: int, db: AsyncSession):
 
     # 3. Summani tekshirish
     amount_sum = float(amount)
-    expected_amount = float(contract.monthly_fee * 100)
+    expected_amount = float(contract.monthly_fee)
 
     if amount_sum != expected_amount:
         return create_error_response(
