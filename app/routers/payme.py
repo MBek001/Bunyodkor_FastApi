@@ -132,13 +132,18 @@ async def payme_payment(
     elif method == "PerformTransaction":
         return await perform_transaction(params, request_id, db)
 
+    elif method == "CheckTransaction":  # ✅ YANGI METOD
+        return await check_transaction(params, request_id, db)
+
+    elif method == "CancelTransaction":  # ✅ YANGI METOD (kerak bo'ladi)
+        return await cancel_transaction(params, request_id, db)
+
     else:
         return create_error_response(
             PaymeError.METHOD_NOT_FOUND,
             "Метод не найден",
             request_id
         )
-
 
 async def check_perform_transaction(params: dict, request_id: int, db: AsyncSession):
     amount = params.get("amount")
@@ -292,6 +297,7 @@ async def create_transaction(params: dict, request_id: int, db: AsyncSession):
             request_id
         )
 
+    # ✅ Avval mavjud tranzaksiyani tekshiramiz
     existing_result = await db.execute(
         select(Transaction).where(
             Transaction.external_id == str(payme_id)
@@ -326,6 +332,7 @@ async def create_transaction(params: dict, request_id: int, db: AsyncSession):
                 request_id
             )
 
+        # PENDING holatida bo'lsa, mavjud tranzaksiyani qaytaramiz
         return create_success_response(
             {
                 "create_time": int(existing.created_at.timestamp() * 1000),
@@ -338,6 +345,7 @@ async def create_transaction(params: dict, request_id: int, db: AsyncSession):
             request_id
         )
 
+    # ✅ Shartnomani tekshiramiz
     contract_result = await db.execute(
         select(Contract).where(Contract.contract_number == contract_number)
     )
@@ -357,6 +365,7 @@ async def create_transaction(params: dict, request_id: int, db: AsyncSession):
             request_id
         )
 
+    # ✅ Summani tekshiramiz
     amount_sum = float(amount)
     expected_amount = float(contract.monthly_fee)
 
@@ -399,10 +408,11 @@ async def create_transaction(params: dict, request_id: int, db: AsyncSession):
             request_id
         )
 
+    # ✅ MUHIM: PENDING yoki SUCCESS holatida dublikat tekshirish
     duplicate_check = await db.execute(
         select(Transaction).where(
             Transaction.contract_id == contract.id,
-            Transaction.status == PaymentStatus.SUCCESS,
+            Transaction.status.in_([PaymentStatus.SUCCESS, PaymentStatus.PENDING]),  # ✅ PENDING ham qo'shildi
             Transaction.payment_year == payment_year,
             cast(Transaction.payment_months, JSONB).op('@>')(cast([payment_month], JSONB))
         )
@@ -412,10 +422,11 @@ async def create_transaction(params: dict, request_id: int, db: AsyncSession):
     if duplicate:
         return create_error_response(
             PaymeError.COULD_NOT_PERFORM,
-            f"Оплата за этот месяц уже существует",
+            f"Оплата за этот месяц уже существует или ожидает подтверждения",
             request_id
         )
 
+    # ✅ Yangi tranzaksiya yaratamiz
     transaction = Transaction(
         external_id=str(payme_id),
         amount=amount_sum,
@@ -548,6 +559,141 @@ async def perform_transaction(params: dict, request_id: int, db: AsyncSession):
             "transaction": str(transaction.id),
             "state": 2,
             "reason": None
+        },
+        request_id
+    )
+
+async def check_transaction(params: dict, request_id: int, db: AsyncSession):
+    """Tranzaksiya holatini tekshirish"""
+    payme_id = params.get("id")
+
+    if not payme_id:
+        return create_error_response(
+            PaymeError.INVALID_PARAMS,
+            "Неверные параметры",
+            request_id
+        )
+
+    transaction_result = await db.execute(
+        select(Transaction).where(
+            Transaction.external_id == str(payme_id)
+        )
+    )
+    transaction = transaction_result.scalar_one_or_none()
+
+    if not transaction:
+        return create_error_response(
+            PaymeError.TRANSACTION_NOT_FOUND,
+            "Транзакция не найдена",
+            request_id
+        )
+
+    # State mapping:
+    # 1 = PENDING (created, not performed)
+    # 2 = SUCCESS (performed)
+    # -1 = PENDING_CANCEL (cancel requested)
+    # -2 = CANCELLED (cancelled)
+
+    if transaction.status == PaymentStatus.SUCCESS:
+        return create_success_response(
+            {
+                "create_time": int(transaction.created_at.timestamp() * 1000),
+                "perform_time": int(transaction.paid_at.timestamp() * 1000) if transaction.paid_at else 0,
+                "cancel_time": 0,
+                "transaction": str(transaction.id),
+                "state": 2,
+                "reason": None
+            },
+            request_id
+        )
+
+    if transaction.status == PaymentStatus.CANCELLED:
+        return create_success_response(
+            {
+                "create_time": int(transaction.created_at.timestamp() * 1000),
+                "perform_time": 0,
+                "cancel_time": int(transaction.updated_at.timestamp() * 1000) if transaction.updated_at else 0,
+                "transaction": str(transaction.id),
+                "state": -2,
+                "reason": 5  # 5 = cancelled by timeout or other reason
+            },
+            request_id
+        )
+
+    # PENDING state
+    return create_success_response(
+        {
+            "create_time": int(transaction.created_at.timestamp() * 1000),
+            "perform_time": 0,
+            "cancel_time": 0,
+            "transaction": str(transaction.id),
+            "state": 1,
+            "reason": None
+        },
+        request_id
+    )
+
+
+async def cancel_transaction(params: dict, request_id: int, db: AsyncSession):
+    """Tranzaksiyani bekor qilish"""
+    payme_id = params.get("id")
+    reason = params.get("reason", 5)  # default reason
+
+    if not payme_id:
+        return create_error_response(
+            PaymeError.INVALID_PARAMS,
+            "Неверные параметры",
+            request_id
+        )
+
+    transaction_result = await db.execute(
+        select(Transaction).where(
+            Transaction.external_id == str(payme_id)
+        )
+    )
+    transaction = transaction_result.scalar_one_or_none()
+
+    if not transaction:
+        return create_error_response(
+            PaymeError.TRANSACTION_NOT_FOUND,
+            "Транзакция не найдена",
+            request_id
+        )
+
+    # Agar allaqachon bekor qilingan bo'lsa
+    if transaction.status == PaymentStatus.CANCELLED:
+        return create_success_response(
+            {
+                "create_time": int(transaction.created_at.timestamp() * 1000),
+                "perform_time": 0,
+                "cancel_time": int(transaction.updated_at.timestamp() * 1000) if transaction.updated_at else 0,
+                "transaction": str(transaction.id),
+                "state": -2,
+                "reason": reason
+            },
+            request_id
+        )
+
+    # SUCCESS holatida bekor qilish mumkin emas
+    if transaction.status == PaymentStatus.SUCCESS:
+        # Lekin Payme protokoli bo'yicha SUCCESS'ni ham bekor qilish mumkin
+        # Bu sizning biznes logikangizga bog'liq
+        pass
+
+    # Bekor qilish
+    transaction.status = PaymentStatus.CANCELLED
+    transaction.comment = f"Cancelled by Payme: reason {reason}"
+    await db.commit()
+    await db.refresh(transaction)
+
+    return create_success_response(
+        {
+            "create_time": int(transaction.created_at.timestamp() * 1000),
+            "perform_time": 0,
+            "cancel_time": int(transaction.updated_at.timestamp() * 1000),
+            "transaction": str(transaction.id),
+            "state": -2,
+            "reason": reason
         },
         request_id
     )
