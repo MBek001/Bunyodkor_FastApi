@@ -297,15 +297,17 @@ async def create_transaction(params: dict, request_id: int, db: AsyncSession):
             request_id
         )
 
-    # ✅ Avval mavjud tranzaksiyani tekshiramiz
+    # ✅ 1. Shu payme_id bilan tranzaksiya bormi tekshiramiz
     existing_result = await db.execute(
         select(Transaction).where(
             Transaction.external_id == str(payme_id)
         )
     )
-    existing = existing_result.scalar_one_or_none()
+    existing = existing_result.first()  # ✅ first() ishlatamiz
 
     if existing:
+        existing = existing[0]  # tuple dan Transaction obyektini olamiz
+
         if existing.status == PaymentStatus.SUCCESS:
             return create_success_response(
                 {
@@ -332,7 +334,7 @@ async def create_transaction(params: dict, request_id: int, db: AsyncSession):
                 request_id
             )
 
-        # PENDING holatida bo'lsa, mavjud tranzaksiyani qaytaramiz
+        # PENDING holatida
         return create_success_response(
             {
                 "create_time": int(existing.created_at.timestamp() * 1000),
@@ -345,7 +347,7 @@ async def create_transaction(params: dict, request_id: int, db: AsyncSession):
             request_id
         )
 
-    # ✅ Shartnomani tekshiramiz
+    # ✅ 2. Shartnomani tekshiramiz
     contract_result = await db.execute(
         select(Contract).where(Contract.contract_number == contract_number)
     )
@@ -365,7 +367,7 @@ async def create_transaction(params: dict, request_id: int, db: AsyncSession):
             request_id
         )
 
-    # ✅ Summani tekshiramiz
+    # ✅ 3. Summani tekshiramiz
     amount_sum = float(amount)
     expected_amount = float(contract.monthly_fee)
 
@@ -408,16 +410,17 @@ async def create_transaction(params: dict, request_id: int, db: AsyncSession):
             request_id
         )
 
-    # ✅ MUHIM: PENDING yoki SUCCESS holatida dublikat tekshirish
+    # ✅ 4. BOSHQA tranzaksiyalar bilan dublikat tekshirish
     duplicate_check = await db.execute(
         select(Transaction).where(
             Transaction.contract_id == contract.id,
-            Transaction.status.in_([PaymentStatus.SUCCESS, PaymentStatus.PENDING]),  # ✅ PENDING ham qo'shildi
+            Transaction.status.in_([PaymentStatus.SUCCESS, PaymentStatus.PENDING]),
             Transaction.payment_year == payment_year,
-            cast(Transaction.payment_months, JSONB).op('@>')(cast([payment_month], JSONB))
+            cast(Transaction.payment_months, JSONB).op('@>')(cast([payment_month], JSONB)),
+            Transaction.external_id != str(payme_id)  # ✅ Faqat BOSHQA tranzaksiyalar
         )
     )
-    duplicate = duplicate_check.scalar_one_or_none()
+    duplicate = duplicate_check.first()  # ✅ first() ishlatamiz
 
     if duplicate:
         return create_error_response(
@@ -426,7 +429,7 @@ async def create_transaction(params: dict, request_id: int, db: AsyncSession):
             request_id
         )
 
-    # ✅ Yangi tranzaksiya yaratamiz
+    # ✅ 5. Yangi tranzaksiya yaratamiz
     transaction = Transaction(
         external_id=str(payme_id),
         amount=amount_sum,
