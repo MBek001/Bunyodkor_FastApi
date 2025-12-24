@@ -411,11 +411,30 @@ async def create_transaction(params: dict, request_id: int, db: AsyncSession):
             request_id
         )
 
-    # ✅ 4. FAQAT SUCCESS tranzaksiya tekshirish (PENDING EMAS!)
+    # ✅ 4. PENDING tranzaksiya bormi tekshirish
+    pending_check = await db.execute(
+        select(Transaction).where(
+            Transaction.contract_id == contract.id,
+            Transaction.status == PaymentStatus.PENDING,
+            Transaction.payment_year == payment_year,
+            cast(Transaction.payment_months, JSONB).op('@>')(cast([payment_month], JSONB))
+        )
+    )
+    pending_transaction = pending_check.first()
+
+    if pending_transaction:
+        # ⚠️ -31050 yoki -31099 oralig'idagi xato qaytarish kerak
+        return create_error_response(
+            -31099,  # ✅ Payme test uchun to'g'ri kod
+            "Для этого месяца уже существует ожидающая транзакция",
+            request_id
+        )
+
+    # ✅ 5. SUCCESS tranzaksiya bormi tekshirish
     duplicate_check = await db.execute(
         select(Transaction).where(
             Transaction.contract_id == contract.id,
-            Transaction.status == PaymentStatus.SUCCESS,  # ⚠️ Faqat SUCCESS!
+            Transaction.status == PaymentStatus.SUCCESS,
             Transaction.payment_year == payment_year,
             cast(Transaction.payment_months, JSONB).op('@>')(cast([payment_month], JSONB))
         )
@@ -424,12 +443,12 @@ async def create_transaction(params: dict, request_id: int, db: AsyncSession):
 
     if duplicate:
         return create_error_response(
-            PaymeError.COULD_NOT_PERFORM,
+            -31099,  # ✅ To'g'ri xato kodi
             f"Оплата за этот месяц уже существует",
             request_id
         )
 
-    # ✅ 5. Yangi tranzaksiya yaratamiz
+    # ✅ 6. Yangi tranzaksiya yaratamiz
     transaction = Transaction(
         external_id=str(payme_id),
         amount=amount_sum,
