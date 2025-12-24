@@ -73,55 +73,52 @@ def create_success_response(result: dict, request_id: int):
 
 @router.post("/payment")
 async def payme_payment(
-        request: Request,
-        db: Annotated[AsyncSession, Depends(get_db)]
+    request: Request,
+    db: Annotated[AsyncSession, Depends(get_db)]
 ):
-    try:
-        body = await request.json()
-    except Exception:
-        return create_error_response(
-            PaymeError.PARSE_ERROR,
-            "Ошибка разбора JSON"
-        )
-
+    body = await request.json()
     method = body.get("method")
     params = body.get("params", {})
     request_id = body.get("id")
 
-    if not method:
-        return create_error_response(
-            PaymeError.METHOD_NOT_FOUND,
-            "Метод не найден",
-            request_id
-        )
+    # 🔴 1️⃣ Authorization YO‘Q bo‘lsa
+    if not check_authorization(request):
+        # ChangePassword bundan mustasno
+        if method != "ChangePassword":
+            return create_error_response(
+                PaymeError.INVALID_AUTHORIZATION,
+                "Недостаточно привилегий",
+                request_id
+            )
 
+    # 🟢 2️⃣ Endi method’lar
     if method == "CheckPerformTransaction":
-        return await check_perform_transaction(params, request, request_id, db)
+        return await check_perform_transaction(params, request_id, db)
 
     elif method == "CreateTransaction":
-        return await create_transaction(params, request, request_id, db)
+        return await create_transaction(params, request_id, db)
 
     elif method == "PerformTransaction":
-        return await perform_transaction(params, request, request_id, db)
+        return await perform_transaction(params, request_id, db)
 
     elif method == "CancelTransaction":
-        return await cancel_transaction(params, request, request_id, db)
+        return await cancel_transaction(params, request_id, db)
 
     elif method == "CheckTransaction":
-        return await check_transaction(params, request, request_id, db)
+        return await check_transaction(params, request_id, db)
 
     elif method == "GetStatement":
-        return await get_statement(params, request, request_id, db)
+        return await get_statement(params, request_id, db)
 
     elif method == "ChangePassword":
-        return await change_password(params, request, request_id, db)
+        return create_success_response({"success": True}, request_id)
 
-    else:
-        return create_error_response(
-            PaymeError.METHOD_NOT_FOUND,
-            "Метод не найден",
-            request_id
-        )
+    return create_error_response(
+        PaymeError.METHOD_NOT_FOUND,
+        "Метод не найден",
+        request_id
+    )
+
 
 
 async def check_perform_transaction(params, request, request_id, db):
