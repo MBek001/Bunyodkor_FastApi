@@ -179,7 +179,7 @@ async def check_perform_transaction(params: dict, request_id: int, db: AsyncSess
             request_id
         )
 
-    amount_sum = amount / 100
+    amount_sum = amount
     min_amount = float(contract.monthly_fee)
 
     if amount_sum < min_amount:
