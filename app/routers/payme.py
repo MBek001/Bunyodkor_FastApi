@@ -125,19 +125,10 @@ async def payme_payment(
 
 
 async def check_perform_transaction(params, request, request_id, db):
-    # 🔴 1. AUTH — HAR DOIM BIRINCHI
-    if not check_authorization(request):
-        return create_error_response(
-            PaymeError.INVALID_AUTHORIZATION,
-            "Недостаточно привилегий",
-            request_id
-        )
-
-    # 🟢 2. PARAMETRLAR
     amount = params.get("amount")
-    account = params.get("account", {})
+    account = params.get("account")
 
-    # amount tiyinlarda keladi
+    # 1️⃣ amount
     if amount is None or not isinstance(amount, (int, float)) or amount <= 0:
         return create_error_response(
             PaymeError.INVALID_AMOUNT,
@@ -145,6 +136,14 @@ async def check_perform_transaction(params, request, request_id, db):
             request_id
         )
 
+    # 2️⃣ account
+    if not isinstance(account, dict):
+        return create_error_response(
+            PaymeError.INVALID_PARAMS,
+            "Неверные параметры",
+            request_id
+        )
+
     contract_number = account.get("contract")
     if not contract_number:
         return create_error_response(
@@ -153,10 +152,10 @@ async def check_perform_transaction(params, request, request_id, db):
             request_id
         )
 
-    contract_result = await db.execute(
+    # 3️⃣ contract
+    contract = (await db.execute(
         select(Contract).where(Contract.contract_number == contract_number)
-    )
-    contract = contract_result.scalar_one_or_none()
+    )).scalar_one_or_none()
 
     if not contract or contract.status == ContractStatus.DELETED:
         return create_error_response(
@@ -165,119 +164,16 @@ async def check_perform_transaction(params, request, request_id, db):
             request_id
         )
 
-    # tiyin → so‘m
+    # 4️⃣ amount logic
     amount_sum = amount / 100
-    min_amount = float(contract.monthly_fee)
-
-    # ❗ sandbox aynan SHU joyni tekshiradi
-    if amount_sum < min_amount:
+    if amount_sum < float(contract.monthly_fee):
         return create_error_response(
             PaymeError.INVALID_AMOUNT,
             "Неверная сумма",
             request_id
         )
 
-    # oy / yil
-    payment_year = int(account.get("payment_year", datetime.now().year))
-    payment_month = int(account.get("payment_month", datetime.now().month))
-
-    if not (1 <= payment_month <= 12):
-        return create_error_response(
-            PaymeError.INVALID_PARAMS,
-            "Неверный месяц оплаты",
-            request_id
-        )
-
-    from datetime import date
-    payment_date = date(payment_year, payment_month, 1)
-    contract_start = date(contract.start_date.year, contract.start_date.month, 1)
-    contract_end = date(contract.end_date.year, contract.end_date.month, 1)
-
-    if payment_date < contract_start or payment_date > contract_end:
-        return create_error_response(
-            PaymeError.COULD_NOT_PERFORM,
-            "Договор истек или еще не начался",
-            request_id
-        )
-
-    # duplicate
-    duplicate_check = await db.execute(
-        select(Transaction).where(
-            Transaction.contract_id == contract.id,
-            Transaction.status == PaymentStatus.SUCCESS,
-            Transaction.payment_year == payment_year,
-            cast(Transaction.payment_months, JSONB).op('@>')(cast([payment_month], JSONB))
-        )
-    )
-    if duplicate_check.scalar_one_or_none():
-        return create_error_response(
-            PaymeError.COULD_NOT_PERFORM,
-            "Оплата за этот месяц уже существует",
-            request_id
-        )
-
-    # 🟢 HAMMASI OK
-    return create_success_response(
-        {"allow": True},
-        request_id
-    )
-
-
-
-
-async def create_transaction(params, request, request_id, db):
-    # 1️⃣ amount tekshiruvi (AUTH'DAN OLDIN!)
-    amount = params.get("amount")
-    account = params.get("account", {})
-
-    if amount is None or not isinstance(amount, (int, float)):
-        return create_error_response(
-            PaymeError.INVALID_AMOUNT,
-            "Неверная сумма",
-            request_id
-        )
-
-    amount_sum = amount / 100  # tiyin → so‘m
-
-    if amount_sum <= 0:
-        return create_error_response(
-            PaymeError.INVALID_AMOUNT,
-            "Неверная сумма",
-            request_id
-        )
-
-    # 2️⃣ contract tekshiruvi (hali AUTH YO‘Q)
-    contract_number = account.get("contract")
-    if not contract_number:
-        return create_error_response(
-            PaymeError.INVALID_PARAMS,
-            "Номер договора не указан",
-            request_id
-        )
-
-    contract_result = await db.execute(
-        select(Contract).where(Contract.contract_number == contract_number)
-    )
-    contract = contract_result.scalar_one_or_none()
-
-    if not contract or contract.status == ContractStatus.DELETED:
-        return create_error_response(
-            PaymeError.INVALID_ACCOUNT,
-            "Абонент не найден",
-            request_id
-        )
-
-    min_amount = float(contract.monthly_fee)
-
-    # 🔥 SANDBOX SHU JOYNI TEST QILADI
-    if amount_sum < min_amount:
-        return create_error_response(
-            PaymeError.INVALID_AMOUNT,
-            "Неверная сумма",
-            request_id
-        )
-
-    # 3️⃣ FAQAT ENDI AUTH
+    # 5️⃣ AUTH — FAQAT ENDI
     if not check_authorization(request):
         return create_error_response(
             PaymeError.INVALID_AUTHORIZATION,
@@ -285,38 +181,64 @@ async def create_transaction(params, request, request_id, db):
             request_id
         )
 
-    # 4️⃣ qolgan parametrlar
+    return create_success_response({"allow": True}, request_id)
+
+
+
+
+
+async def create_transaction(params, request, request_id, db):
     payme_id = params.get("id")
     time = params.get("time")
+    amount = params.get("amount")
+    account = params.get("account")
 
-    if not all([payme_id, time]):
+    # 1️⃣ params
+    if not all([payme_id, time, amount]) or not isinstance(account, dict):
         return create_error_response(
             PaymeError.INVALID_PARAMS,
             "Неверные параметры",
             request_id
         )
 
-    # 5️⃣ duplicate transaction
-    existing_result = await db.execute(
-        select(Transaction).where(Transaction.external_id == str(payme_id))
-    )
-    existing = existing_result.scalar_one_or_none()
-
-    if existing:
-        return create_success_response(
-            {
-                "create_time": int(existing.created_at.timestamp() * 1000),
-                "transaction": str(existing.id),
-                "state": 1 if existing.status == PaymentStatus.PENDING else 2
-            },
+    # 2️⃣ contract
+    contract_number = account.get("contract")
+    if not contract_number:
+        return create_error_response(
+            PaymeError.INVALID_PARAMS,
+            "Номер договора не указан",
             request_id
         )
 
-    # 6️⃣ payment month/year
-    payment_year = int(account.get("payment_year", datetime.now().year))
-    payment_month = int(account.get("payment_month", datetime.now().month))
+    contract = (await db.execute(
+        select(Contract).where(Contract.contract_number == contract_number)
+    )).scalar_one_or_none()
 
-    # 7️⃣ transaction yaratish
+    if not contract or contract.status == ContractStatus.DELETED:
+        return create_error_response(
+            PaymeError.INVALID_ACCOUNT,
+            "Абонент не найден",
+            request_id
+        )
+
+    # 3️⃣ amount logic
+    amount_sum = amount / 100
+    if amount_sum < float(contract.monthly_fee):
+        return create_error_response(
+            PaymeError.INVALID_AMOUNT,
+            "Неверная сумма",
+            request_id
+        )
+
+    # 4️⃣ AUTH — ENG OXIRIDA
+    if not check_authorization(request):
+        return create_error_response(
+            PaymeError.INVALID_AUTHORIZATION,
+            "Недостаточно привилегий",
+            request_id
+        )
+
+    # 5️⃣ transaction create
     transaction = Transaction(
         external_id=str(payme_id),
         amount=amount_sum,
@@ -324,9 +246,8 @@ async def create_transaction(params, request, request_id, db):
         status=PaymentStatus.PENDING,
         contract_id=contract.id,
         student_id=contract.student_id,
-        payment_year=payment_year,
-        payment_months=[payment_month],
-        comment=f"Payme create: {payme_id}"
+        payment_year=datetime.now().year,
+        payment_months=[datetime.now().month]
     )
 
     db.add(transaction)
@@ -336,11 +257,15 @@ async def create_transaction(params, request, request_id, db):
     return create_success_response(
         {
             "create_time": int(transaction.created_at.timestamp() * 1000),
+            "perform_time": 0,
+            "cancel_time": 0,
             "transaction": str(transaction.id),
-            "state": 1
+            "state": 1,
+            "reason": None
         },
         request_id
     )
+
 
 
 
