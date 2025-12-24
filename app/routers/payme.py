@@ -274,16 +274,7 @@ async def get_statement(params: dict, request_id: int, db: AsyncSession):
 
 
 async def check_perform_transaction(params: dict, request_id: int, db: AsyncSession):
-    """
-    ✅ To'lov qilish mumkinligini tekshirish
 
-    Parametrlar:
-    - contract: Shartnoma raqami
-    - archive_year: Shartnoma yili (2025, 2026, ...)
-    - payment_month: To'lov oyi (1-12)
-    - payment_year: Qaysi yil uchun to'lov (masalan, 2026)
-    - amount: To'lov summasi (tiyin)
-    """
     amount = params.get("amount")
     account = params.get("account", {})
 
@@ -293,7 +284,6 @@ async def check_perform_transaction(params: dict, request_id: int, db: AsyncSess
         )
 
     contract_number = account.get("contract")
-    archive_year = account.get("archive_year")
     payment_month = account.get("payment_month")
     payment_year = account.get("payment_year")
 
@@ -302,13 +292,6 @@ async def check_perform_transaction(params: dict, request_id: int, db: AsyncSess
         return create_error_response(
             PaymeError.INVALID_PARAMS,
             "Номер договора обязателен",
-            request_id
-        )
-
-    if not archive_year:
-        return create_error_response(
-            PaymeError.INVALID_PARAMS,
-            "Год договора (archive_year) обязателен",
             request_id
         )
 
@@ -327,7 +310,7 @@ async def check_perform_transaction(params: dict, request_id: int, db: AsyncSess
         )
 
     try:
-        archive_year = int(archive_year)
+
         payment_month = int(payment_month)
         payment_year = int(payment_year)
     except (TypeError, ValueError):
@@ -341,13 +324,13 @@ async def check_perform_transaction(params: dict, request_id: int, db: AsyncSess
         )
 
     print(
-        f"✅ CheckPerform: contract={contract_number}, archive_year={archive_year}, payment_month={payment_month}, payment_year={payment_year}")
+        f"✅ CheckPerform: contract={contract_number}, payment_month={payment_month}, payment_year={payment_year}")
 
     # 1. Shartnomani topish
     contract_result = await db.execute(
         select(Contract).where(
             Contract.contract_number == contract_number,
-            Contract.archive_year == archive_year
+            Contract.archive_year == payment_year
         )
     )
     contract = contract_result.scalar_one_or_none()
@@ -357,9 +340,8 @@ async def check_perform_transaction(params: dict, request_id: int, db: AsyncSess
             "error": {
                 "code": -31050,
                 "message": {
-                    "ru": f"Договор {contract_number} за {archive_year} год не найден",
-                    "uz": f"{contract_number} shartnoma {archive_year} yil uchun topilmadi",
-                    "en": f"Contract {contract_number} for year {archive_year} not found"
+                    "uz": f"{contract_number} shartnoma  yil uchun topilmadi",
+                    "en": f"Contract {contract_number} for year not found"
                 },
                 "data": "account.contract"
             },
