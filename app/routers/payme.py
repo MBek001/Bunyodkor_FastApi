@@ -32,7 +32,7 @@ def check_authorization(request: Request) -> bool:
 
     print(f"🔑 Authorization header: {auth_header}")
     print(f"🔑 X-Auth header: {x_auth}")
-    print(f"🔐 Expected PAYME_KEY: {settings.PAYME_KEY}")
+
     print(f"📋 All headers: {dict(request.headers)}")
 
     if x_auth:
