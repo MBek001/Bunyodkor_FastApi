@@ -28,23 +28,48 @@ class PaymeError:
 
 def check_authorization(request: Request) -> bool:
     auth_header = request.headers.get("Authorization", "")
+    x_auth = request.headers.get("X-Auth", "")
+
+    print(f"🔑 Authorization header: {auth_header}")
+    print(f"🔑 X-Auth header: {x_auth}")
+    print(f"🔐 Expected PAYME_KEY: {settings.PAYME_KEY}")
+    print(f"📋 All headers: {dict(request.headers)}")
+
+    if x_auth:
+        result = x_auth == settings.PAYME_KEY
+        print(f"✅ X-Auth check result: {result}")
+        return result
+
+    if not auth_header:
+        print("❌ No auth headers found")
+        return False
 
     if not auth_header.startswith("Basic "):
+        print("❌ Auth header doesn't start with 'Basic '")
         return False
 
     try:
         encoded = auth_header.replace("Basic ", "")
         decoded = base64.b64decode(encoded).decode("utf-8")
 
+        print(f"🔓 Decoded: {decoded}")
+
         if ":" not in decoded:
+            print("❌ No colon in decoded string")
             return False
 
         login, password = decoded.split(":", 1)
-        expected_key = settings.PAYME_KEY
 
-        return login == "Payme" and password == expected_key
+        print(f"👤 Login: {login}")
+        print(f"🔒 Password: {password}")
 
-    except Exception:
+        result = login == "Payme" and password == settings.PAYME_KEY
+        print(f"✅ Basic Auth result: {result}")
+
+        return result
+
+    except Exception as e:
+        print(f"❌ Exception: {e}")
         return False
 
 
