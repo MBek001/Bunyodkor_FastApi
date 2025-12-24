@@ -443,16 +443,17 @@ async def create_transaction(params: dict, request_id: int, db: AsyncSession):
 
     # ✅ 6. Check for OTHER pending transactions for same month (not this payme_id)
     # Only block if there's a DIFFERENT pending transaction
+    # ✅ 6. BOSHQA pending tranzaksiyalarni tekshirish
     other_pending_check = await db.execute(
         select(Transaction).where(
             Transaction.contract_id == contract.id,
             Transaction.status == PaymentStatus.PENDING,
             Transaction.payment_year == payment_year,
             cast(Transaction.payment_months, JSONB).op('@>')(cast([payment_month], JSONB)),
-            Transaction.external_id != str(payme_id)  # Different transaction
+            Transaction.external_id != str(payme_id)  # Boshqa tranzaksiya
         )
     )
-    other_pending = other_pending_check.scalar_one_or_none()
+    other_pending = other_pending_check.first()  # ✅ Bu yerda first() ishlatamiz
 
     if other_pending:
         return {
