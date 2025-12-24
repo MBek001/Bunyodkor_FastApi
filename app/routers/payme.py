@@ -125,26 +125,29 @@ async def payme_payment(
 
 
 async def check_perform_transaction(params, request, request_id, db):
+    # 1️⃣ amount tekshiruvi (tiyinlarda keladi)
     amount = params.get("amount")
     account = params.get("account", {})
 
-    if amount is None or amount <= 0:
+    if amount is None or not isinstance(amount, (int, float)):
         return create_error_response(
             PaymeError.INVALID_AMOUNT,
             "Неверная сумма",
             request_id
         )
 
-    # 🔽 FAQAT SHUNDAN KEYIN AUTH
-    if not check_authorization(request):
+    # tiyin → so‘m
+    amount_sum = amount / 100
+
+    if amount_sum <= 0:
         return create_error_response(
-            PaymeError.INVALID_AUTHORIZATION,
-            "Недостаточно привилегий",
+            PaymeError.INVALID_AMOUNT,
+            "Неверная сумма",
             request_id
         )
 
+    # 2️⃣ contract tekshiruvi (AUTH’dan OLDIN!)
     contract_number = account.get("contract")
-
     if not contract_number:
         return create_error_response(
             PaymeError.INVALID_PARAMS,
@@ -157,56 +160,44 @@ async def check_perform_transaction(params, request, request_id, db):
     )
     contract = contract_result.scalar_one_or_none()
 
-    if not contract:
+    if not contract or contract.status == ContractStatus.DELETED:
         return create_error_response(
             PaymeError.INVALID_ACCOUNT,
             "Абонент не найден",
             request_id
         )
 
-    if contract.status == ContractStatus.DELETED:
-        return create_error_response(
-            PaymeError.INVALID_ACCOUNT,
-            "Абонент не найден",
-            request_id
-        )
-
-    amount_sum = amount / 100
     min_amount = float(contract.monthly_fee)
 
+    # 🔥 ENG MUHIM QATOR — sandbox shu joyni tekshiradi
     if amount_sum < min_amount:
         return create_error_response(
             PaymeError.INVALID_AMOUNT,
-            f"Неверная сумма оплаты. Минимум: {min_amount}",
+            "Неверная сумма",
             request_id
         )
 
-    payment_year = account.get("payment_year")
-    payment_month = account.get("payment_month")
+    # 3️⃣ AUTH — FAQAT ENDI
+    if not check_authorization(request):
+        return create_error_response(
+            PaymeError.INVALID_AUTHORIZATION,
+            "Недостаточно привилегий",
+            request_id
+        )
 
-    if payment_year is not None:
-        try:
-            payment_year = int(payment_year)
-        except (TypeError, ValueError):
-            return create_error_response(
-                PaymeError.INVALID_PARAMS,
-                "Неверный год оплаты",
-                request_id
-            )
-    else:
-        payment_year = datetime.now().year
+    # 4️⃣ payment_year / payment_month
+    payment_year = account.get("payment_year", datetime.now().year)
+    payment_month = account.get("payment_month", datetime.now().month)
 
-    if payment_month is not None:
-        try:
-            payment_month = int(payment_month)
-        except (TypeError, ValueError):
-            return create_error_response(
-                PaymeError.INVALID_PARAMS,
-                "Неверный месяц оплаты",
-                request_id
-            )
-    else:
-        payment_month = datetime.now().month
+    try:
+        payment_year = int(payment_year)
+        payment_month = int(payment_month)
+    except (TypeError, ValueError):
+        return create_error_response(
+            PaymeError.INVALID_PARAMS,
+            "Неверные параметры месяца/года",
+            request_id
+        )
 
     if not (1 <= payment_month <= 12):
         return create_error_response(
@@ -216,24 +207,26 @@ async def check_perform_transaction(params, request, request_id, db):
         )
 
     from datetime import date as date_class
+
     payment_date = date_class(payment_year, payment_month, 1)
-    contract_start_month = date_class(contract.start_date.year, contract.start_date.month, 1)
-    contract_end_month = date_class(contract.end_date.year, contract.end_date.month, 1)
+    contract_start = date_class(contract.start_date.year, contract.start_date.month, 1)
+    contract_end = date_class(contract.end_date.year, contract.end_date.month, 1)
 
-    if payment_date < contract_start_month:
+    if payment_date < contract_start:
         return create_error_response(
             PaymeError.COULD_NOT_PERFORM,
-            f"Договор еще не начался. Начало: {contract.start_date.isoformat()}",
+            "Договор еще не начался",
             request_id
         )
 
-    if payment_date > contract_end_month:
+    if payment_date > contract_end:
         return create_error_response(
             PaymeError.COULD_NOT_PERFORM,
-            f"Договор истек. Окончание: {contract.end_date.isoformat()}",
+            "Договор истек",
             request_id
         )
 
+    # 5️⃣ duplicate payment tekshiruvi
     duplicate_check = await db.execute(
         select(Transaction).where(
             Transaction.contract_id == contract.id,
@@ -245,21 +238,18 @@ async def check_perform_transaction(params, request, request_id, db):
     duplicate = duplicate_check.scalar_one_or_none()
 
     if duplicate:
-        month_names = {
-            1: "январь", 2: "февраль", 3: "март", 4: "апрель",
-            5: "май", 6: "июнь", 7: "июль", 8: "август",
-            9: "сентябрь", 10: "октябрь", 11: "ноябрь", 12: "декабрь"
-        }
         return create_error_response(
             PaymeError.COULD_NOT_PERFORM,
-            f"Оплата за {month_names[payment_month]} {payment_year} уже существует",
+            "Оплата за этот месяц уже существует",
             request_id
         )
 
+    # 6️⃣ HAMMASI OK
     return create_success_response(
         {"allow": True},
         request_id
     )
+
 
 
 async def create_transaction(params, request, request_id, db):
