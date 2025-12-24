@@ -307,7 +307,7 @@ async def create_transaction(params: dict, request_id: int, db: AsyncSession):
     existing = existing_result.first()
 
     if existing:
-        existing = existing[0]  # tuple dan Transaction obyektini olamiz
+        existing = existing[0]
 
         if existing.status == PaymentStatus.SUCCESS:
             return create_success_response(
@@ -411,43 +411,25 @@ async def create_transaction(params: dict, request_id: int, db: AsyncSession):
             request_id
         )
 
-    # ✅ 4. PENDING tranzaksiya bormi tekshirish (YANGI QO'SHILDI)
-    pending_check = await db.execute(
+    # ✅ 4. PENDING yoki SUCCESS tranzaksiya bormi tekshirish (BITTA IF BLOK)
+    existing_payment_check = await db.execute(
         select(Transaction).where(
             Transaction.contract_id == contract.id,
-            Transaction.status == PaymentStatus.PENDING,
+            Transaction.status.in_([PaymentStatus.PENDING, PaymentStatus.SUCCESS]),
             Transaction.payment_year == payment_year,
             cast(Transaction.payment_months, JSONB).op('@>')(cast([payment_month], JSONB))
         )
     )
-    pending_transaction = pending_check.first()
+    existing_payment = existing_payment_check.first()
 
-    if pending_transaction:
+    if existing_payment:
         return create_error_response(
             PaymeError.COULD_NOT_PERFORM,
             "Ushbu hisob uchun to'lov kutilmoqda",
             request_id
         )
 
-    # ✅ 5. SUCCESS tranzaksiya bormi tekshirish
-    duplicate_check = await db.execute(
-        select(Transaction).where(
-            Transaction.contract_id == contract.id,
-            Transaction.status == PaymentStatus.SUCCESS,
-            Transaction.payment_year == payment_year,
-            cast(Transaction.payment_months, JSONB).op('@>')(cast([payment_month], JSONB))
-        )
-    )
-    duplicate = duplicate_check.first()
-
-    if duplicate:
-        return create_error_response(
-            PaymeError.COULD_NOT_PERFORM,
-            f"Оплата за этот месяц уже существует",
-            request_id
-        )
-
-    # ✅ 6. Yangi tranzaksiya yaratamiz
+    # ✅ 5. Yangi tranzaksiya yaratamiz
     transaction = Transaction(
         external_id=str(payme_id),
         amount=amount_sum,
