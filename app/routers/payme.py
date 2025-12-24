@@ -354,13 +354,14 @@ async def create_transaction(params: dict, request_id: int, db: AsyncSession):
     )
     contract = contract_result.scalar_one_or_none()
 
+    # 🚨 Agar shartnoma topilmasa, Payme spetsifikatsiyasiga mos xato qaytaramiz
     if not contract:
         return {
             "error": {
                 "code": -31050,
                 "message": {
-                    "ru": "Абонент с таким номером договора не найден",
-                    "uz": "Bunday shartnoma raqamli abonent topilmadi",
+                    "ru": "Договор с таким номером не найден",
+                    "uz": "Bunday shartnoma raqamli foydalanuvchi topilmadi",
                     "en": "Contract not found"
                 },
                 "data": "account.contract"
@@ -368,12 +369,20 @@ async def create_transaction(params: dict, request_id: int, db: AsyncSession):
             "id": request_id
         }
 
+    # 🚨 Agar shartnoma holati yaroqsiz (masalan, bekor qilingan) bo‘lsa
     if contract.status == ContractStatus.DELETED:
-        return create_error_response(
-            PaymeError.INVALID_ACCOUNT,
-            "Абонент не найден",
-            request_id
-        )
+        return {
+            "error": {
+                "code": -31051,
+                "message": {
+                    "ru": "Договор недействителен",
+                    "uz": "Shartnoma faol emas yoki bekor qilingan",
+                    "en": "Contract is inactive or deleted"
+                },
+                "data": "account.contract"
+            },
+            "id": request_id
+        }
 
     # ✅ 3. Summani tekshiramiz
     amount_sum = float(amount)
