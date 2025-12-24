@@ -247,10 +247,11 @@ async def check_perform_transaction(params: dict, request_id: int, db: AsyncSess
             request_id
         )
 
+    # In check_perform_transaction, change:
     duplicate_check = await db.execute(
         select(Transaction).where(
             Transaction.contract_id == contract.id,
-            Transaction.status == PaymentStatus.SUCCESS,
+            Transaction.status == PaymentStatus.SUCCESS,  # Only check successful
             Transaction.payment_year == payment_year,
             cast(Transaction.payment_months, JSONB).op('@>')(cast([payment_month], JSONB))
         )
@@ -414,10 +415,9 @@ async def create_transaction(params: dict, request_id: int, db: AsyncSession):
     duplicate_check = await db.execute(
         select(Transaction).where(
             Transaction.contract_id == contract.id,
-            Transaction.status.in_([PaymentStatus.SUCCESS, PaymentStatus.PENDING]),
+            Transaction.status == PaymentStatus.SUCCESS,  # ✅ CORRECT - only check successful payments
             Transaction.payment_year == payment_year,
-            cast(Transaction.payment_months, JSONB).op('@>')(cast([payment_month], JSONB)),
-            Transaction.external_id != str(payme_id)  # ✅ Faqat BOSHQA tranzaksiyalar
+            cast(Transaction.payment_months, JSONB).op('@>')(cast([payment_month], JSONB))
         )
     )
     duplicate = duplicate_check.first()  # ✅ first() ishlatamiz
