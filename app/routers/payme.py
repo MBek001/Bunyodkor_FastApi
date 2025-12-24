@@ -411,21 +411,21 @@ async def create_transaction(params: dict, request_id: int, db: AsyncSession):
             request_id
         )
 
-    # ✅ 4. PENDING yoki SUCCESS tranzaksiya bormi tekshirish (BITTA IF BLOK)
-    existing_payment_check = await db.execute(
+    # ✅ 4. FAQAT SUCCESS tranzaksiya tekshirish (PENDING EMAS!)
+    duplicate_check = await db.execute(
         select(Transaction).where(
             Transaction.contract_id == contract.id,
-            Transaction.status.in_([PaymentStatus.PENDING, PaymentStatus.SUCCESS]),
+            Transaction.status == PaymentStatus.SUCCESS,  # ⚠️ Faqat SUCCESS!
             Transaction.payment_year == payment_year,
             cast(Transaction.payment_months, JSONB).op('@>')(cast([payment_month], JSONB))
         )
     )
-    existing_payment = existing_payment_check.first()
+    duplicate = duplicate_check.first()
 
-    if existing_payment:
+    if duplicate:
         return create_error_response(
             PaymeError.COULD_NOT_PERFORM,
-            "Ushbu hisob uchun to'lov kutilmoqda",
+            f"Оплата за этот месяц уже существует",
             request_id
         )
 
