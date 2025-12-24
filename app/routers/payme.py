@@ -125,13 +125,6 @@ async def payme_payment(
 
 
 async def check_perform_transaction(params, request, request_id, db):
-    if not check_authorization(request):
-        return create_error_response(
-            PaymeError.INVALID_AUTHORIZATION,
-            "Недостаточно привилегий",
-            request_id
-        )
-
     amount = params.get("amount")
     account = params.get("account", {})
 
@@ -139,6 +132,14 @@ async def check_perform_transaction(params, request, request_id, db):
         return create_error_response(
             PaymeError.INVALID_AMOUNT,
             "Неверная сумма",
+            request_id
+        )
+
+    # 🔽 FAQAT SHUNDAN KEYIN AUTH
+    if not check_authorization(request):
+        return create_error_response(
+            PaymeError.INVALID_AUTHORIZATION,
+            "Недостаточно привилегий",
             request_id
         )
 
@@ -262,13 +263,6 @@ async def check_perform_transaction(params, request, request_id, db):
 
 
 async def create_transaction(params, request, request_id, db):
-    if not check_authorization(request):
-        return create_error_response(
-            PaymeError.INVALID_AUTHORIZATION,
-            "Недостаточно привилегий",
-            request_id
-        )
-
     amount = params.get("amount")
 
     if amount is None or amount <= 0:
@@ -277,6 +271,17 @@ async def create_transaction(params, request, request_id, db):
             "Неверная сумма",
             request_id
         )
+
+    # 🔽 keyin auth
+    if not check_authorization(request):
+        return create_error_response(
+            PaymeError.INVALID_AUTHORIZATION,
+            "Недостаточно привилегий",
+            request_id
+        )
+
+    # qolgan kod o‘zgarmaydi
+
 
     payme_id = params.get("id")
     time = params.get("time")
