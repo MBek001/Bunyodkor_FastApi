@@ -63,7 +63,7 @@ def check_authorization(request: Request) -> bool:
         print(f"👤 Login: {login}")
         print(f"🔒 Password: {password}")
 
-        result = login == "Payme" and password == settings.PAYME_KEY
+        result = login == "Paycom" and password == settings.PAYME_KEY
         print(f"✅ Basic Auth result: {result}")
 
         return result
