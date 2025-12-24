@@ -5,6 +5,7 @@ from sqlalchemy import select, cast
 from sqlalchemy.dialects.postgresql import JSONB
 from datetime import datetime
 import base64
+from sqlalchemy import String
 
 from app.core.db import get_db
 from app.core.config import settings
@@ -322,6 +323,16 @@ async def create_transaction(params: dict, request_id: int, db: AsyncSession):
                 request_id
             )
 
+        if existing.status == PaymentStatus.PENDING:
+            return create_success_response(
+                {
+                    "create_time": int(existing.created_at.timestamp() * 1000),
+                    "transaction": str(existing.id),
+                    "state": 1
+                },
+                request_id
+            )
+
         if existing.status == PaymentStatus.CANCELLED:
             return create_success_response(
                 {
@@ -605,9 +616,11 @@ async def check_transaction(params: dict, request_id: int, db: AsyncSession):
 
     transaction_result = await db.execute(
         select(Transaction).where(
-            Transaction.external_id == str(payme_id)
+            (Transaction.external_id == str(payme_id)) |
+            (cast(Transaction.id, String) == str(payme_id))
         )
     )
+
     transaction = transaction_result.scalar_one_or_none()
 
     print(f"🔍 Transaction found: {transaction}")
