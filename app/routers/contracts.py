@@ -550,7 +550,7 @@ async def get_next_available_number(
     Birth year is automatically taken from the group's birth_year.
     Returns the next sequential contract number to use.
 
-    Example: If group has N1, N2, N3 used, returns N4.
+    Example: If group B1 (birth year 2020) has 1-2020B1, 2-2020B1, 3-2020B1 used, returns 4-2020B1.
     """
     # Get group
     group_result = await db.execute(select(Group).where(Group.id == group_id))
@@ -580,7 +580,7 @@ async def get_next_available_number(
 
     # Get the first (lowest) available number
     next_seq = available_numbers[0]
-    contract_number = f"N{group.identifier}{next_seq}{birth_year}"
+    contract_number = f"{next_seq}-{birth_year}{group.identifier}"
 
     return DataResponse(data={
         "next_number": next_seq,
