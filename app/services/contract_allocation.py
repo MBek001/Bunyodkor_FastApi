@@ -2,9 +2,9 @@
 Contract number allocation service.
 
 Handles contract number generation based on student birth year, group identifier and capacity.
-Format: N{identifier}{sequence}{year}
-Examples: N1B12020, N1B22020, N1B32020 for group 1B, students born in 2020
-          N2C12019, N2C22019, N2C32019 for group 2C, students born in 2019
+Format: {sequence}-{year}{identifier}
+Examples: 1-2020B1, 2-2020B1, 3-2020B1 for group B1, students born in 2020
+          1-2019C2, 2-2019C2, 3-2019C2 for group C2, students born in 2019
 
 IMPORTANT: Once a contract number is used, it can NEVER be reused.
 Only the status changes (ACTIVE -> EXPIRED -> TERMINATED).
@@ -94,7 +94,7 @@ async def allocate_contract_number(
 
     Returns:
         Tuple of (contract_number, birth_year, sequence_number)
-        Example: ("N1B12020", 2020, 1) for group 1B
+        Example: ("1-2020B1", 2020, 1) for group B1
 
     Raises:
         ContractNumberAllocationError: If allocation fails
@@ -126,7 +126,7 @@ async def allocate_contract_number(
 
     # Use the first available number
     sequence_number = available_numbers[0]
-    contract_number = f"N{group.identifier}{sequence_number}{birth_year}"
+    contract_number = f"{sequence_number}-{birth_year}{group.identifier}"
 
     return contract_number, birth_year, sequence_number
 
@@ -207,7 +207,7 @@ async def validate_contract_number(
 
     Args:
         db: Database session
-        contract_number: Contract number to validate (e.g., "N1B12020")
+        contract_number: Contract number to validate (e.g., "1-2020B1")
         group_id: Group ID
         birth_year: Student's birth year
         archive_year: Archive year filter (defaults to current year)
@@ -230,25 +230,36 @@ async def validate_contract_number(
     if not group:
         return False, f"Group {group_id} not found", None
 
-    # Parse contract number (format: N{identifier}{seq}{year})
+    # Parse contract number (format: {seq}-{year}{identifier})
     try:
-        if not contract_number.startswith('N'):
-            return False, "Contract number must start with 'N'", None
+        if '-' not in contract_number:
+            return False, "Contract number must contain '-' separator", None
 
-        # Verify it ends with birth year
-        if not contract_number.endswith(str(birth_year)):
-            return False, f"Contract number must end with birth year {birth_year}", None
+        # Split by hyphen
+        parts = contract_number.split('-', 1)
+        if len(parts) != 2:
+            return False, f"Invalid contract number format: {contract_number}. Expected format: {{seq}}-{{year}}{{identifier}}", None
 
-        # Extract middle part (identifier + sequence)
-        middle = contract_number[1:-len(str(birth_year))]
+        # First part should be sequence number
+        try:
+            sequence_number = int(parts[0])
+        except ValueError:
+            return False, f"Invalid sequence number: {parts[0]}. Must be a number.", None
 
-        # Match pattern: identifier (letters/numbers) + sequence (numbers only)
-        match = re.match(r'^(.+?)(\d+)$', middle)
+        # Second part should be year + identifier
+        year_and_identifier = parts[1]
+
+        # Extract year (first 4 digits)
+        match = re.match(r'^(\d{4})(.+)$', year_and_identifier)
         if not match:
-            return False, f"Invalid contract number format: {contract_number}. Expected format: N{{identifier}}{{seq}}{{year}}", None
+            return False, f"Invalid format in '{year_and_identifier}'. Expected 4-digit year followed by identifier.", None
 
-        extracted_identifier = match.group(1)
-        sequence_number = int(match.group(2))
+        extracted_year = int(match.group(1))
+        extracted_identifier = match.group(2)
+
+        # Verify year matches birth year
+        if extracted_year != birth_year:
+            return False, f"Contract year '{extracted_year}' doesn't match birth year {birth_year}", None
 
         # Verify identifier matches group
         if extracted_identifier != group.identifier:
@@ -280,7 +291,7 @@ async def validate_contract_number(
         # Find next available
         next_available = available_numbers[0] if available_numbers else None
         if next_available:
-            return False, f"Number {sequence_number} is already used. Next available: N{group.identifier}{next_available}{birth_year}", next_available
+            return False, f"Number {sequence_number} is already used. Next available: {next_available}-{birth_year}{group.identifier}", next_available
         else:
             return False, f"No available numbers for birth year {birth_year} in this group", None
 
