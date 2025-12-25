@@ -4,6 +4,7 @@ from contextlib import asynccontextmanager
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.cron import CronTrigger
 import logging
+import pytz  # ✅ Qo'shildi
 from app.routers import (
     auth,
     users,
@@ -34,8 +35,11 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-# Initialize scheduler
-scheduler = AsyncIOScheduler()
+# ✅ Timezone configuration
+timezone = pytz.timezone(app_settings.TIMEZONE)  # "Asia/Tashkent"
+
+# Initialize scheduler with timezone
+scheduler = AsyncIOScheduler(timezone=timezone)  # ✅ Timezone qo'shildi
 
 
 @asynccontextmanager
@@ -48,12 +52,19 @@ async def lifespan(app: FastAPI):
 
     # Initialize backup scheduler if enabled
     if app_settings.BACKUP_ENABLED:
-        logger.info(f"Backup enabled - scheduling daily backups at {app_settings.BACKUP_HOUR}:00")
+        logger.info(
+            f"Backup enabled - scheduling daily backups at {app_settings.BACKUP_HOUR}:00 "
+            f"({app_settings.TIMEZONE})"  # ✅ Timezone ko'rsatish
+        )
 
-        # Schedule backup to run daily at specified hour
+        # Schedule backup to run daily at specified hour in Tashkent timezone
         scheduler.add_job(
             backup_service.run_backup,
-            trigger=CronTrigger(hour=app_settings.BACKUP_HOUR, minute=0),
+            trigger=CronTrigger(
+                hour=app_settings.BACKUP_HOUR,
+                minute=0,
+                timezone=timezone  # ✅ Timezone qo'shildi
+            ),
             id="daily_backup",
             name="Daily Database Backup",
             replace_existing=True,
@@ -61,7 +72,14 @@ async def lifespan(app: FastAPI):
 
         # Start the scheduler
         scheduler.start()
-        logger.info("Backup scheduler started")
+        logger.info(
+            f"Backup scheduler started - next run at {app_settings.BACKUP_HOUR}:00 "
+            f"{app_settings.TIMEZONE}"
+        )
+
+        # ✅ Keyingi backup vaqtini ko'rsatish
+        next_run = scheduler.get_job("daily_backup").next_run_time
+        logger.info(f"Next backup scheduled for: {next_run}")
     else:
         logger.info("Backup is disabled in configuration")
 
@@ -92,7 +110,23 @@ app.add_middleware(
 
 @app.get("/health")
 async def health_check():
-    return {"status": "ok", "service": "bunyodkor-cims"}
+    """Health check endpoint with scheduler status"""
+    scheduler_status = "running" if scheduler.running else "stopped"
+    next_backup = None
+
+    if scheduler.running and app_settings.BACKUP_ENABLED:
+        job = scheduler.get_job("daily_backup")
+        if job:
+            next_backup = job.next_run_time.isoformat() if job.next_run_time else None
+
+    return {
+        "status": "ok",
+        "service": "bunyodkor-cims",
+        "scheduler": scheduler_status,
+        "backup_enabled": app_settings.BACKUP_ENABLED,
+        "next_backup": next_backup,
+        "timezone": app_settings.TIMEZONE
+    }
 
 
 app.include_router(auth.router)
@@ -114,7 +148,7 @@ app.include_router(archive.router)
 app.include_router(click.router)
 app.include_router(payme.router)
 
-
 if __name__ == "__main__":
     import uvicorn
+
     uvicorn.run("main:app", host="0.0.0.0", port=8008, reload=True)
