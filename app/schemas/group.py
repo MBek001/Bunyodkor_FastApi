@@ -60,3 +60,16 @@ class GroupCapacityInfo(BaseModel):
     available_slots: int
     waiting_list_count: int
     by_birth_year: Dict[str, GroupCapacityByYear]
+
+
+class GroupsByYear(BaseModel):
+    """Groups organized by birth year"""
+    birth_year: int
+    groups: list[GroupRead]
+    total_groups: int
+
+
+class GroupedByYearResponse(BaseModel):
+    """Response for groups grouped by birth year"""
+    data: list[GroupsByYear]
+    total_birth_years: int

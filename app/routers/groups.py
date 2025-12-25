@@ -6,7 +6,7 @@ from collections import defaultdict
 from app.core.db import get_db
 from app.core.permissions import PERM_GROUPS_VIEW, PERM_GROUPS_EDIT
 from app.models.domain import Group, Student, Contract, WaitingList
-from app.schemas.group import GroupRead, GroupCreate, GroupUpdate, GroupCapacityInfo, GroupCapacityByYear
+from app.schemas.group import GroupRead, GroupCreate, GroupUpdate, GroupCapacityInfo, GroupCapacityByYear, GroupsByYear, GroupedByYearResponse
 from app.schemas.student import StudentRead
 from app.schemas.common import DataResponse, PaginationMeta
 from app.deps import require_permission
@@ -19,6 +19,7 @@ router = APIRouter(prefix="/groups", tags=["Groups"])
 async def get_groups(
     db: Annotated[AsyncSession, Depends(get_db)],
     archive_year: int | None = Query(None, description="Filter by archive year (NULL for groups not yet archived)"),
+    birth_year: int | None = Query(None, description="Filter by birth year (e.g., 2020, 2019)"),
     status: GroupStatus | None = Query(None, description="Filter by status (ACTIVE, ARCHIVED, DELETED)"),
     include_archived: bool = Query(False, description="Include archived groups (ignored if status is specified)"),
     page: int = Query(1, ge=1),
@@ -32,6 +33,7 @@ async def get_groups(
 
     Filters:
     - archive_year: Filter by specific year, or use NULL to find groups not yet archived
+    - birth_year: Filter by student birth year (e.g., 2020 shows all groups for students born in 2020)
     - status: Filter by specific status (overrides include_archived)
     - include_archived: Include all statuses if True (ignored if status is specified)
     """
@@ -40,6 +42,10 @@ async def get_groups(
     # Filter by archive_year if specified
     if archive_year is not None:
         query = query.where(Group.archive_year == archive_year)
+
+    # Filter by birth_year if specified
+    if birth_year is not None:
+        query = query.where(Group.birth_year == birth_year)
 
     # Filter by status if specified (takes priority)
     if status is not None:
@@ -55,6 +61,8 @@ async def get_groups(
     count_query = select(func.count(Group.id))
     if archive_year is not None:
         count_query = count_query.where(Group.archive_year == archive_year)
+    if birth_year is not None:
+        count_query = count_query.where(Group.birth_year == birth_year)
     if status is not None:
         count_query = count_query.where(Group.status == status)
     elif not include_archived:
@@ -96,6 +104,107 @@ async def get_groups(
             total=total,
             total_pages=(total + page_size - 1) // page_size,
         ),
+    )
+
+
+@router.get("/grouped-by-year", response_model=GroupedByYearResponse, dependencies=[Depends(require_permission(PERM_GROUPS_VIEW))])
+async def get_groups_grouped_by_year(
+    db: Annotated[AsyncSession, Depends(get_db)],
+    archive_year: int | None = Query(None, description="Filter by archive year"),
+    status: GroupStatus | None = Query(None, description="Filter by status (ACTIVE, ARCHIVED, DELETED)"),
+    include_archived: bool = Query(False, description="Include archived groups"),
+):
+    """
+    Get all groups organized by birth year.
+
+    Returns groups grouped by birth year with statistics for each year.
+    Useful for seeing the distribution of groups across different age categories.
+
+    Example Response:
+    ```json
+    {
+      "data": [
+        {
+          "birth_year": 2020,
+          "groups": [
+            {"id": 1, "name": "Group B1", "identifier": "B1", ...},
+            {"id": 2, "name": "Group B2", "identifier": "B2", ...}
+          ],
+          "total_groups": 2
+        },
+        {
+          "birth_year": 2019,
+          "groups": [
+            {"id": 3, "name": "Group C1", "identifier": "C1", ...}
+          ],
+          "total_groups": 1
+        }
+      ],
+      "total_birth_years": 2
+    }
+    ```
+    """
+    query = select(Group)
+
+    # Apply filters
+    if archive_year is not None:
+        query = query.where(Group.archive_year == archive_year)
+
+    if status is not None:
+        query = query.where(Group.status == status)
+    elif not include_archived:
+        query = query.where(Group.status == GroupStatus.ACTIVE)
+
+    # Order by birth_year descending (newest first)
+    query = query.order_by(Group.birth_year.desc())
+
+    result = await db.execute(query)
+    groups = result.scalars().all()
+
+    # Group by birth year
+    groups_by_year = defaultdict(list)
+    for group in groups:
+        groups_by_year[group.birth_year].append(group)
+
+    # Convert to response format
+    grouped_data = []
+    for birth_year in sorted(groups_by_year.keys(), reverse=True):
+        year_groups = groups_by_year[birth_year]
+
+        # Enrich each group with student counts
+        enriched_groups = []
+        for group in year_groups:
+            group_dict = GroupRead.model_validate(group).model_dump()
+
+            # Count active students
+            from app.models.enums import StudentStatus
+            student_count_result = await db.execute(
+                select(func.count(Student.id)).where(
+                    and_(
+                        Student.group_id == group.id,
+                        Student.status == StudentStatus.ACTIVE
+                    )
+                )
+            )
+            group_dict['active_students_count'] = student_count_result.scalar() or 0
+
+            # Count waiting list
+            waiting_count_result = await db.execute(
+                select(func.count(WaitingList.id)).where(WaitingList.group_id == group.id)
+            )
+            group_dict['waiting_list_count'] = waiting_count_result.scalar() or 0
+
+            enriched_groups.append(GroupRead(**group_dict))
+
+        grouped_data.append(GroupsByYear(
+            birth_year=birth_year,
+            groups=enriched_groups,
+            total_groups=len(year_groups)
+        ))
+
+    return GroupedByYearResponse(
+        data=grouped_data,
+        total_birth_years=len(groups_by_year)
     )
 
 
