@@ -192,8 +192,8 @@ async def change_password(params: dict, request_id: int, request: Request):
             "id": request_id
         }
 
-    # old_password = CURRENT_PAYME_PASSWORD if CURRENT_PAYME_PASSWORD else settings.PAYME_KEY
-    # CURRENT_PAYME_PASSWORD = new_password
+    old_password = CURRENT_PAYME_PASSWORD if CURRENT_PAYME_PASSWORD else settings.PAYME_KEY
+    CURRENT_PAYME_PASSWORD = new_password
 
 
     return create_success_response({"success": True}, request_id)
