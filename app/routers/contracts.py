@@ -611,8 +611,8 @@ async def get_contract_pdf_url(
     Instead of returning the actual PDF stream, this endpoint returns the S3 URL.
 
     Example:
-        GET /contracts/2025/N12017/pdf
-        → Returns: {"pdf_url": "https://bucket.s3.region.amazonaws.com/contract-pdfs/N12017_xxx.pdf"}
+        GET /contracts/2025/1-2017B1/pdf
+        → Returns: {"pdf_url": "https://bucket.s3.region.amazonaws.com/contract-pdfs/1-2017B1_xxx.pdf"}
     """
 
     # Find contract in DB
@@ -657,7 +657,7 @@ async def get_contract_payment_status(
     - Total paid, unpaid, and expected amounts
 
     Example:
-        GET /contracts/N1B12020/payment-status
+        GET /contracts/1-2020B1/payment-status
     """
     from datetime import date as date_class
     from sqlalchemy.dialects.postgresql import JSONB
@@ -781,7 +781,7 @@ async def get_contract_student_data(
     - Old contract details
 
     Example:
-        GET /contracts/2025/N1B12020/student-data
+        GET /contracts/2025/1-2020B1/student-data
     """
     # Find contract with related student and parent data
     result = await db.execute(

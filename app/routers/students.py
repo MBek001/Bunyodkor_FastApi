@@ -1001,7 +1001,7 @@ async def create_student_with_contract(
     **contract_data JSON structure:**
     ```json
      {
-          "contract_number": "N52014",
+          "contract_number": "5-2014B1",
           "student": {
             "student_image": "student_photo.png",
             "student_fio": "Юсупов Абдулборий Баҳодирович",
