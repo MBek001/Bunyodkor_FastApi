@@ -975,37 +975,41 @@ class ContractPDFGenerator:
                     contract_imgs_list = contract_imgs
 
             # Build PDF in correct order:
-            # 1. Father passport front (required)
-            passport = data.get("passport_copy_url")
-            if passport:
-                image_urls.append(passport)
+            # 1. Form 086 (tibbiy forma)
+            form_086 = data.get("form_086_url")
+            if form_086:
+                image_urls.append(form_086)
 
-            # 2. Father passport back (optional) - contract_image_3 (index 2)
-            if len(contract_imgs_list) > 2 and contract_imgs_list[2]:
-                image_urls.append(contract_imgs_list[2])
+            # 2. Heart checkup (yurak tekshiruvi)
+            heart_checkup = data.get("heart_checkup_url")
+            if heart_checkup:
+                image_urls.append(heart_checkup)
 
-            # 3. Mother passport front (optional) - contract_image_2 (index 1)
-            if len(contract_imgs_list) > 1 and contract_imgs_list[1]:
-                image_urls.append(contract_imgs_list[1])
-
-            # 4. Mother passport back (optional) - contract_image_4 (index 3)
-            if len(contract_imgs_list) > 3 and contract_imgs_list[3]:
-                image_urls.append(contract_imgs_list[3])
-
-            # 5. Birth certificate front (required)
+            # 3. Birth certificate front (tug'ilganlik guvohnomasi oldi)
             birth_cert = data.get("birth_certificate_url")
             if birth_cert:
                 image_urls.append(birth_cert)
 
-            # 6. Birth certificate back (optional) - contract_image_5 (index 4)
+            # 4. Birth certificate back (optional) - contract_image_5 (index 4)
             if len(contract_imgs_list) > 4 and contract_imgs_list[4]:
                 image_urls.append(contract_imgs_list[4])
 
-            # 7. Medical documents
-            for key in ["form_086_url", "heart_checkup_url"]:
-                val = data.get(key)
-                if val:
-                    image_urls.append(val)
+            # 5. Father passport front (ota pasport oldi)
+            passport = data.get("passport_copy_url")
+            if passport:
+                image_urls.append(passport)
+
+            # 6. Father passport back (optional) - contract_image_3 (index 2)
+            if len(contract_imgs_list) > 2 and contract_imgs_list[2]:
+                image_urls.append(contract_imgs_list[2])
+
+            # 7. Mother passport front (optional) - contract_image_2 (index 1)
+            if len(contract_imgs_list) > 1 and contract_imgs_list[1]:
+                image_urls.append(contract_imgs_list[1])
+
+            # 8. Mother passport back (optional) - contract_image_4 (index 3)
+            if len(contract_imgs_list) > 3 and contract_imgs_list[3]:
+                image_urls.append(contract_imgs_list[3])
 
             if image_urls:
                 print(f"🖼 {len(image_urls)} ta ilova fayl PDFga qo‘shilmoqda...")
