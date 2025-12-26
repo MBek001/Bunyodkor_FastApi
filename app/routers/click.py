@@ -271,7 +271,7 @@ async def click_payment(
                 "contract":contract.contract_number,
                 "full_name": full_name,
                 "phone": student.phone,
-                "address": address_data,
+                "address": student.address,
                 "monthly_fee":float(contract.monthly_fee),
                 "contract_status": contract.status.value,
                 "start_date": contract.start_date.isoformat(),
