@@ -972,8 +972,9 @@ async def create_student_with_contract(
     form_086: UploadFile = File(..., description="Medical form 086 file"),
     heart_checkup: UploadFile = File(..., description="Heart checkup document file"),
     birth_certificate: UploadFile = File(..., description="Birth certificate file"),
-        contract_image_1: UploadFile | None = File(None, description="Contract page 1 (optional)"),
-        contract_image_2: UploadFile | None = File(None, description="Contract page 2 (optional)"),
+    contract_image_1: UploadFile | None = File(None, description="Contract page 1 (optional)"),
+    contract_image_2: UploadFile | None = File(None, description="Contract page 2 (optional)"),
+    contract_image_3: UploadFile | None = File(None, description="Contract page 3 (optional)"),
 
 ):
     """
@@ -1092,6 +1093,8 @@ async def create_student_with_contract(
         contract_images_urls.append(await upload_image_to_s3(contract_image_1, "contracts"))
     if contract_image_2:
         contract_images_urls.append(await upload_image_to_s3(contract_image_2, "contracts"))
+    if contract_image_3:
+        contract_images_urls.append(await upload_image_to_s3(contract_image_3, "contracts"))
 
     # Extract contract fields
     buyurtmachi = contract_info.get("buyurtmachi", {})
@@ -1131,7 +1134,7 @@ async def create_student_with_contract(
     # Upload all files to S3
     try:
         # Fayl pointerlarini qayta boshiga olish
-        for f in [passport_copy, form_086, heart_checkup, birth_certificate, contract_image_1, contract_image_2]:
+        for f in [passport_copy, form_086, heart_checkup, birth_certificate, contract_image_1, contract_image_2, contract_image_3]:
             if f is not None:
                 f.file.seek(0)
 
@@ -1146,6 +1149,8 @@ async def create_student_with_contract(
             contract_images_urls.append(await upload_image_to_s3(contract_image_1, "contracts"))
         if contract_image_2:
             contract_images_urls.append(await upload_image_to_s3(contract_image_2, "contracts"))
+        if contract_image_3:
+            contract_images_urls.append(await upload_image_to_s3(contract_image_3, "contracts"))
 
 
     except Exception as e:

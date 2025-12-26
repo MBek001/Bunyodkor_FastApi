@@ -2,6 +2,8 @@ import boto3
 import io
 from uuid import uuid4
 from fastapi import UploadFile
+from PIL import Image
+import fitz  # PyMuPDF
 from .config import settings
 
 AWS_ACCESS_KEY_ID = settings.AWS_ACCESS_KEY_ID
@@ -18,29 +20,87 @@ s3 = boto3.client(
 
 async def upload_image_to_s3(file: UploadFile, folder: str = "contracts") -> str:
     """
-    Asinxron S3 yuklash — 'seek of closed file' xatosiz ishlaydi.
-    Faylni .read() orqali xotiraga o'qiydi va yopiq fayllarda ham ishlaydi.
+    Upload image to S3 with automatic format conversion.
+
+    Supports: JPG, JPEG, PNG, PDF
+    - Images (JPG, PNG, JPEG) are uploaded as-is
+    - PDFs are converted to JPG (first page only)
+
+    Returns:
+        S3 URL of uploaded file
     """
     if not file:
         return None
 
     try:
-        # Fayl kontentini o'qib olamiz
+        # Read file content
         content = await file.read()
-        buffer = io.BytesIO(content)
 
-        # Fayl nomi
-        extension = file.filename.split('.')[-1]
+        # Get file extension
+        extension = file.filename.split('.')[-1].lower()
+        content_type = file.content_type or ""
+
+        # Check if it's a PDF
+        is_pdf = extension == "pdf" or "pdf" in content_type.lower()
+
+        if is_pdf:
+            # Convert PDF to JPG
+            pdf_document = fitz.open(stream=content, filetype="pdf")
+
+            # Get first page
+            page = pdf_document[0]
+
+            # Render page to pixmap (image)
+            pix = page.get_pixmap(matrix=fitz.Matrix(2, 2))  # 2x resolution for better quality
+
+            # Convert pixmap to PIL Image
+            img_data = pix.tobytes("jpeg")
+            img = Image.open(io.BytesIO(img_data))
+
+            # Save as JPEG to buffer
+            buffer = io.BytesIO()
+            img.save(buffer, format="JPEG", quality=95)
+            buffer.seek(0)
+
+            pdf_document.close()
+
+            # Set extension to jpg
+            extension = "jpg"
+            final_content_type = "image/jpeg"
+
+        else:
+            # For regular images (JPG, PNG, JPEG), upload as-is
+            buffer = io.BytesIO(content)
+
+            # Validate it's actually an image
+            try:
+                img = Image.open(buffer)
+                img.verify()  # Verify it's a valid image
+                buffer.seek(0)  # Reset buffer position
+
+                # Normalize extension
+                if extension in ["jpg", "jpeg"]:
+                    extension = "jpg"
+                    final_content_type = "image/jpeg"
+                elif extension == "png":
+                    final_content_type = "image/png"
+                else:
+                    # Unsupported format
+                    raise ValueError(f"Unsupported image format: {extension}. Please use JPG, PNG, or PDF.")
+
+            except Exception as e:
+                raise ValueError(f"Invalid image file: {str(e)}")
+
+        # Create S3 key
         key = f"{folder}/{uuid4()}.{extension}"
 
-        # Yuklash (public-read ACL for image access from PDF generation)
+        # Upload to S3
         s3.upload_fileobj(
             Fileobj=buffer,
             Bucket=AWS_BUCKET_NAME,
             Key=key,
             ExtraArgs={
-                "ContentType": file.content_type,
-
+                "ContentType": final_content_type,
             }
         )
 
