@@ -926,8 +926,6 @@ async def perform_transaction(params: dict, request_id: int, db: AsyncSession):
 async def check_transaction(params: dict, request_id: int, db: AsyncSession):
     payme_id = params.get("id")
 
-    print(f"🔍 CheckTransaction: Looking for payme_id = {payme_id}")
-
     if not payme_id:
         return {
             "error": {
@@ -951,7 +949,6 @@ async def check_transaction(params: dict, request_id: int, db: AsyncSession):
     transaction = transaction_result.scalar_one_or_none()
 
     if not transaction:
-        print(f"❌ Transaction NOT FOUND for payme_id: {payme_id}")
         return {
             "error": {
                 "code": PaymeError.TRANSACTION_NOT_FOUND,
@@ -983,23 +980,24 @@ async def check_transaction(params: dict, request_id: int, db: AsyncSession):
         state = -2 if transaction.paid_at else -1
         perform_time = int(transaction.paid_at.timestamp() * 1000) if transaction.paid_at else 0
 
-        # ✅ Reason ni comment dan olish (agar bor bo'lsa)
+        # ✅ Reason ni comment dan olish
         reason = None
         if transaction.comment and "reason" in transaction.comment.lower():
             try:
-                # "Cancelled by Payme: reason 3" dan 3 ni olish
                 reason = int(transaction.comment.split("reason")[-1].strip())
             except:
-                reason = 5  # Default reason
+                pass  # Agar parse qilib bo'lmasa, None qoladi
+
+        print(f"🔍 CheckTransaction: state={state}, perform_time={perform_time}, reason={reason}")
 
         return create_success_response(
             {
                 "create_time": int(transaction.created_at.timestamp() * 1000),
-                "perform_time": perform_time,
+                "perform_time": perform_time,  # ✅ paid_at ga qarab 0 yoki timestamp
                 "cancel_time": int(transaction.updated_at.timestamp() * 1000) if transaction.updated_at else 0,
                 "transaction": str(transaction.id),
-                "state": state,  # ✅ paid_at ga qarab
-                "reason": reason  # ✅ Comment dan olingan reason
+                "state": state,  # ✅ paid_at ga qarab -1 yoki -2
+                "reason": reason  # ✅ Comment dan olingan
             },
             request_id
         )
@@ -1041,6 +1039,16 @@ async def cancel_transaction(params: dict, request_id: int, db: AsyncSession):
         )
     )
     transaction = transaction_result.scalar_one_or_none()
+    print(f"🔍 Before cancel: status={transaction.status}, paid_at={transaction.paid_at}")
+
+    state = -2 if transaction.paid_at else -1
+    print(f"🔍 Calculated state: {state}")
+
+    transaction.status = PaymentStatus.CANCELLED
+    transaction.comment = f"Cancelled by Payme: reason {reason}"
+    await db.commit()
+
+    print(f"🔍 After cancel: status={transaction.status}, state={state}")
 
     if not transaction:
         return {
@@ -1055,11 +1063,18 @@ async def cancel_transaction(params: dict, request_id: int, db: AsyncSession):
             "id": request_id
         }
 
-    # ✅ Agar allaqachon bekor qilingan bo'lsa - bir xil javob qaytarish
+    # ✅ Agar allaqachon bekor qilingan bo'lsa
     if transaction.status == PaymentStatus.CANCELLED:
-        # State ni paid_at mavjudligiga qarab aniqlash (CheckTransaction bilan bir xil!)
         state = -2 if transaction.paid_at else -1
         perform_time = int(transaction.paid_at.timestamp() * 1000) if transaction.paid_at else 0
+
+        # ✅ Reason ni comment dan olish
+        saved_reason = reason  # Default
+        if transaction.comment and "reason" in transaction.comment.lower():
+            try:
+                saved_reason = int(transaction.comment.split("reason")[-1].strip())
+            except:
+                saved_reason = reason
 
         return create_success_response(
             {
@@ -1068,16 +1083,18 @@ async def cancel_transaction(params: dict, request_id: int, db: AsyncSession):
                 "cancel_time": int(transaction.updated_at.timestamp() * 1000) if transaction.updated_at else 0,
                 "transaction": str(transaction.id),
                 "state": state,
-                "reason": reason  # Yuborilgan reason qaytarish
+                "reason": saved_reason  # ✅ Saqlangan reason
             },
             request_id
         )
 
     # ✅ State ni paid_at mavjudligiga qarab aniqlash
-    # MUHIM: paid_at bo'lsa → SUCCESS dan cancel
-    # MUHIM: paid_at yo'q bo'lsa → PENDING dan cancel
     state = -2 if transaction.paid_at else -1
     perform_time = int(transaction.paid_at.timestamp() * 1000) if transaction.paid_at else 0
+
+    # ✅ MUHIM: paid_at ni o'zgartirmaslik!
+    # Agar PENDING bo'lsa, paid_at null bo'ladi
+    # Agar SUCCESS bo'lsa, paid_at to'ldirilgan bo'ladi
 
     # Bekor qilish
     transaction.status = PaymentStatus.CANCELLED
@@ -1088,7 +1105,7 @@ async def cancel_transaction(params: dict, request_id: int, db: AsyncSession):
     return create_success_response(
         {
             "create_time": int(transaction.created_at.timestamp() * 1000),
-            "perform_time": perform_time,
+            "perform_time": perform_time,  # ✅ paid_at ga qarab
             "cancel_time": int(transaction.updated_at.timestamp() * 1000),
             "transaction": str(transaction.id),
             "state": state,  # ✅ paid_at ga qarab -1 yoki -2
@@ -1200,3 +1217,5 @@ async def get_statement(params: dict, request_id: int, db: AsyncSession):
         },
         request_id
     )
+
+
