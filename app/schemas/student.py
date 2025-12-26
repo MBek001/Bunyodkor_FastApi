@@ -104,3 +104,5 @@ class StudentFullInfo(BaseModel):
     coach: Optional[UserRead] = None
     transactions: list[TransactionRead]
     attendances: list[AttendanceRead]
+    total_payments: float = 0.0  # Total of all successful payments
+    active_contracts_count: int = 0  # Number of active contracts
