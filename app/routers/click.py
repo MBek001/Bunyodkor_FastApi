@@ -119,27 +119,31 @@ def translate_address(text: str) -> dict:
 def translate_contract_status(status: str) -> dict:
     translations = {
         "active": {
-            "uz": "faol",
-            "ru": "активный",
-            "en": "active"
+            "Shartnoma holati": "Faol",
+            "Состояние договора": "Активный",
+            "Contract status": "Active"
         },
         "inactive": {
-            "uz": "faol emas",
-            "ru": "неактивный",
-            "en": "inactive"
+            "Shartnoma holati": "Faol emas",
+            "Состояние договора": "Неактивный",
+            "Contract status": "Inactive"
         },
         "completed": {
-            "uz": "yakunlangan",
-            "ru": "завершенный",
-            "en": "completed"
+            "Shartnoma holati": "Yakunlangan",
+            "Состояние договора": "Завершенный",
+            "Contract status": "Completed"
         },
         "cancelled": {
-            "uz": "bekor qilingan",
-            "ru": "отменен",
-            "en": "cancelled"
+            "Shartnoma holati": "Bekor qilingan",
+            "Состояние договора": "Отменен",
+            "Contract status": "Cancelled"
         }
     }
-    return translations.get(status.lower(), {"uz": status, "ru": status, "en": status})
+    return translations.get(status.lower(), {
+        "Shartnoma holati": status,
+        "Состояние договора": status,
+        "Contract status": status
+    })
 
 
 def md5_hash(value: str) -> str:
@@ -258,7 +262,6 @@ async def click_payment(
             full_name_data = translate_full_name(full_name)
 
         address_data = translate_address(student.address or "")
-
         status_translations = translate_contract_status(contract.status.value)
 
         return {
@@ -266,32 +269,32 @@ async def click_payment(
             "error_note": "Success",
             "params": {
                 "contract": {
-                    "uz": contract.contract_number,
-                    "ru": contract.contract_number,
-                    "en": contract.contract_number
+                    "Shartnoma raqami": contract.contract_number,
+                    "Номер договора": contract.contract_number,
+                    "Contract number": contract.contract_number
                 },
                 "full_name": full_name_data,
                 "phone": {
-                    "uz": student.phone or "",
-                    "ru": student.phone or "",
-                    "en": student.phone or ""
+                    "Telefon raqami": student.phone or "",
+                    "Номер телефона": student.phone or "",
+                    "Phone number": student.phone or ""
                 },
                 "address": address_data,
                 "monthly_fee": {
-                    "uz": float(contract.monthly_fee),
-                    "ru": float(contract.monthly_fee),
-                    "en": float(contract.monthly_fee)
+                    "Oylik to'lov": float(contract.monthly_fee),
+                    "Ежемесячная плата": float(contract.monthly_fee),
+                    "Monthly fee": float(contract.monthly_fee)
                 },
                 "contract_status": status_translations,
                 "start_date": {
-                    "uz": contract.start_date.isoformat(),
-                    "ru": contract.start_date.isoformat(),
-                    "en": contract.start_date.isoformat()
+                    "Boshlanish sanasi": contract.start_date.isoformat(),
+                    "Дата начала": contract.start_date.isoformat(),
+                    "Start date": contract.start_date.isoformat()
                 },
                 "end_date": {
-                    "uz": contract.end_date.isoformat(),
-                    "ru": contract.end_date.isoformat(),
-                    "en": contract.end_date.isoformat()
+                    "Tugash sanasi": contract.end_date.isoformat(),
+                    "Дата окончания": contract.end_date.isoformat(),
+                    "End date": contract.end_date.isoformat()
                 }
             }
         }
