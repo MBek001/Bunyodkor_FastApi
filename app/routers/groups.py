@@ -247,8 +247,26 @@ async def create_group(
     group_data['archive_year'] = current_year  # Auto-set to current year (2025, 2026, etc.)
     group = Group(**group_data)
     db.add(group)
-    await db.commit()
-    await db.refresh(group)
+
+    try:
+        await db.commit()
+        await db.refresh(group)
+    except Exception as e:
+        await db.rollback()
+        # Check if it's a unique constraint violation
+        error_msg = str(e).lower()
+        if "duplicate" in error_msg or "unique" in error_msg:
+            if "identifier" in error_msg:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"Identifier '{data.identifier}' already exists. Please use a unique identifier."
+                )
+        # Re-raise if it's a different error
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to create group: {str(e)}"
+        )
+
     return DataResponse(data=GroupRead.model_validate(group))
 
 
@@ -311,8 +329,26 @@ async def update_group(
     for field, value in update_data.items():
         setattr(group, field, value)
 
-    await db.commit()
-    await db.refresh(group)
+    try:
+        await db.commit()
+        await db.refresh(group)
+    except Exception as e:
+        await db.rollback()
+        # Check if it's a unique constraint violation
+        error_msg = str(e).lower()
+        if "duplicate" in error_msg or "unique" in error_msg:
+            if "identifier" in error_msg:
+                identifier_value = update_data.get("identifier", group.identifier)
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"Identifier '{identifier_value}' already exists. Please use a unique identifier."
+                )
+        # Re-raise if it's a different error
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to update group: {str(e)}"
+        )
+
     return DataResponse(data=GroupRead.model_validate(group))
 
 
