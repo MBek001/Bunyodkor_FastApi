@@ -958,34 +958,51 @@ class ContractPDFGenerator:
             image_urls = []
             data = self.data
 
-            # 1. Passport copy birinchi
-            passport = data.get("passport_copy_url")
-            if passport:
-                image_urls.append(passport)
-
-            # 2. Contract images (shartnoma rasmlari)
+            # Parse contract_images array
+            contract_imgs_list = []
             contract_imgs = data.get("contract_images_urls")
             if contract_imgs:
                 if isinstance(contract_imgs, str):
                     try:
-                        # JSON string bo'lsa
                         parsed = json.loads(contract_imgs)
                         if isinstance(parsed, list):
-                            image_urls.extend(parsed)
+                            contract_imgs_list = parsed
                         elif isinstance(parsed, str):
-                            image_urls.append(parsed)
+                            contract_imgs_list = [parsed]
                     except json.JSONDecodeError:
-                        image_urls.append(contract_imgs)
+                        contract_imgs_list = [contract_imgs]
                 elif isinstance(contract_imgs, list):
-                    # ro'yxat bo'lsa
-                    image_urls.extend(contract_imgs)
-                elif isinstance(contract_imgs, dict):
-                    print("⚠️ contract_images_urls dict bo'ldi, o'tkazib yuborildi.")
-                else:
-                    print(f"⚠️ contract_images_urls turi noma'lum: {type(contract_imgs)}")
+                    contract_imgs_list = contract_imgs
 
-            # 3. Qolgan hujjatlar (form_086, heart_checkup, birth_certificate)
-            for key in ["form_086_url", "heart_checkup_url", "birth_certificate_url"]:
+            # Build PDF in correct order:
+            # 1. Father passport front (required)
+            passport = data.get("passport_copy_url")
+            if passport:
+                image_urls.append(passport)
+
+            # 2. Father passport back (optional) - contract_image_3 (index 2)
+            if len(contract_imgs_list) > 2 and contract_imgs_list[2]:
+                image_urls.append(contract_imgs_list[2])
+
+            # 3. Mother passport front (optional) - contract_image_2 (index 1)
+            if len(contract_imgs_list) > 1 and contract_imgs_list[1]:
+                image_urls.append(contract_imgs_list[1])
+
+            # 4. Mother passport back (optional) - contract_image_4 (index 3)
+            if len(contract_imgs_list) > 3 and contract_imgs_list[3]:
+                image_urls.append(contract_imgs_list[3])
+
+            # 5. Birth certificate front (required)
+            birth_cert = data.get("birth_certificate_url")
+            if birth_cert:
+                image_urls.append(birth_cert)
+
+            # 6. Birth certificate back (optional) - contract_image_5 (index 4)
+            if len(contract_imgs_list) > 4 and contract_imgs_list[4]:
+                image_urls.append(contract_imgs_list[4])
+
+            # 7. Medical documents
+            for key in ["form_086_url", "heart_checkup_url"]:
                 val = data.get(key)
                 if val:
                     image_urls.append(val)

@@ -968,13 +968,15 @@ async def create_student_with_contract(
     contract_data: str = Form(..., description="Contract data as JSON"),
 
     # ========== DOCUMENT FILES (FormData) ==========
-    passport_copy: UploadFile = File(..., description="Passport copy file"),
+    passport_copy: UploadFile = File(..., description="Father passport (front side)"),
     form_086: UploadFile = File(..., description="Medical form 086 file"),
     heart_checkup: UploadFile = File(..., description="Heart checkup document file"),
-    birth_certificate: UploadFile = File(..., description="Birth certificate file"),
-    contract_image_1: UploadFile | None = File(None, description="Contract page 1 (optional)"),
-    contract_image_2: UploadFile | None = File(None, description="Contract page 2 (optional)"),
-    contract_image_3: UploadFile | None = File(None, description="Contract page 3 (optional)"),
+    birth_certificate: UploadFile = File(..., description="Birth certificate (front side)"),
+    contract_image_1: UploadFile | None = File(None, description="Profile photo (optional)"),
+    contract_image_2: UploadFile | None = File(None, description="Mother passport front (optional)"),
+    contract_image_3: UploadFile | None = File(None, description="Father passport back (optional)"),
+    contract_image_4: UploadFile | None = File(None, description="Mother passport back (optional)"),
+    contract_image_5: UploadFile | None = File(None, description="Birth certificate back (optional)"),
 
 ):
     """
@@ -1095,6 +1097,10 @@ async def create_student_with_contract(
         contract_images_urls.append(await upload_image_to_s3(contract_image_2, "contracts"))
     if contract_image_3:
         contract_images_urls.append(await upload_image_to_s3(contract_image_3, "contracts"))
+    if contract_image_4:
+        contract_images_urls.append(await upload_image_to_s3(contract_image_4, "contracts"))
+    if contract_image_5:
+        contract_images_urls.append(await upload_image_to_s3(contract_image_5, "contracts"))
 
     # Extract contract fields
     buyurtmachi = contract_info.get("buyurtmachi", {})
@@ -1134,7 +1140,7 @@ async def create_student_with_contract(
     # Upload all files to S3
     try:
         # Fayl pointerlarini qayta boshiga olish
-        for f in [passport_copy, form_086, heart_checkup, birth_certificate, contract_image_1, contract_image_2, contract_image_3]:
+        for f in [passport_copy, form_086, heart_checkup, birth_certificate, contract_image_1, contract_image_2, contract_image_3, contract_image_4, contract_image_5]:
             if f is not None:
                 f.file.seek(0)
 
@@ -1151,6 +1157,10 @@ async def create_student_with_contract(
             contract_images_urls.append(await upload_image_to_s3(contract_image_2, "contracts"))
         if contract_image_3:
             contract_images_urls.append(await upload_image_to_s3(contract_image_3, "contracts"))
+        if contract_image_4:
+            contract_images_urls.append(await upload_image_to_s3(contract_image_4, "contracts"))
+        if contract_image_5:
+            contract_images_urls.append(await upload_image_to_s3(contract_image_5, "contracts"))
 
 
     except Exception as e:
