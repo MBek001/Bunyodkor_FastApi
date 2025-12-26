@@ -7,6 +7,7 @@ from sqlalchemy.orm import selectinload
 from datetime import datetime
 import hashlib
 from pydantic import BaseModel
+import re
 
 from app.core.db import get_db
 from app.core.config import settings
@@ -32,6 +33,94 @@ class ClickRequest(BaseModel):
 
 
 PARAMS_ORDER = ["contract", "full_name", "service_type", "amount", "payment_month", "payment_year"]
+
+
+
+def cyrillic_to_latin(text: str) -> str:
+    if not text:
+        return text
+
+    cyrillic_map = {
+
+        'А': 'A', 'Б': 'B', 'В': 'V', 'Г': 'G', 'Д': 'D', 'Е': 'E', 'Ё': 'Yo',
+        'Ж': 'J', 'З': 'Z', 'И': 'I', 'Й': 'Y', 'К': 'K', 'Л': 'L', 'М': 'M',
+        'Н': 'N', 'О': 'O', 'П': 'P', 'Р': 'R', 'С': 'S', 'Т': 'T', 'У': 'U',
+        'Ф': 'F', 'Х': 'X', 'Ц': 'Ts', 'Ч': 'Ch', 'Ш': 'Sh', 'Щ': 'Shch', 'Ъ': "'",
+        'Ы': 'I', 'Ь': '', 'Э': 'E', 'Ю': 'Yu', 'Я': 'Ya',
+        # O'zbek maxsus harflari
+        'Ғ': 'G\'', 'Қ': 'Q', 'Ў': 'O\'', 'Ҳ': 'H',
+
+        # Kichik harflar
+        'а': 'a', 'б': 'b', 'в': 'v', 'г': 'g', 'д': 'd', 'е': 'e', 'ё': 'yo',
+        'ж': 'j', 'з': 'z', 'и': 'i', 'й': 'y', 'к': 'k', 'л': 'l', 'м': 'm',
+        'н': 'n', 'о': 'o', 'п': 'p', 'р': 'r', 'с': 's', 'т': 't', 'у': 'u',
+        'ф': 'f', 'х': 'x', 'ц': 'ts', 'ч': 'ch', 'ш': 'sh', 'щ': 'shch', 'ъ': "'",
+        'ы': 'i', 'ь': '', 'э': 'e', 'ю': 'yu', 'я': 'ya',
+
+        'ғ': 'g\'', 'қ': 'q', 'ў': 'o\'', 'ҳ': 'h'
+    }
+
+    result = ''
+    for char in text:
+        result += cyrillic_map.get(char, char)
+    return result
+
+
+def is_cyrillic(text: str) -> bool:
+    if not text:
+        return False
+    return bool(re.search('[а-яА-ЯёЁўҮғҒқҚҳҲ]', text))
+
+
+def translate_text_field(text: str) -> dict:
+
+    if not text:
+        return {"uz": "", "ru": "", "en": ""}
+
+    text = text.strip()
+
+    if is_cyrillic(text):
+
+        latin_version = cyrillic_to_latin(text)
+        return {
+            "uz": latin_version,
+            "ru": text,
+            "en": latin_version
+        }
+    else:
+
+        return {
+            "uz": text,
+            "ru": text,
+            "en": text
+        }
+
+
+def translate_contract_status(status: str) -> dict:
+    translations = {
+        "active": {
+            "uz": "faol",
+            "ru": "активный",
+            "en": "active"
+        },
+        "inactive": {
+            "uz": "faol emas",
+            "ru": "неактивный",
+            "en": "inactive"
+        },
+        "completed": {
+            "uz": "yakunlangan",
+            "ru": "завершенный",
+            "en": "completed"
+        },
+        "cancelled": {
+            "uz": "bekor qilingan",
+            "ru": "отменен",
+            "en": "cancelled"
+        }
+    }
+    return translations.get(status.lower(), {"uz": status, "ru": status, "en": status})
+
 
 
 def md5_hash(value: str) -> str:
@@ -67,37 +156,41 @@ def verify_signature(data: ClickRequest) -> bool:
     return calculated_sign == data.sign_string
 
 
+
+
 @router.post("/payment")
 async def click_payment(
-    data: ClickRequest,
-    db: Annotated[AsyncSession, Depends(get_db)],
+        data: ClickRequest,
+        db: Annotated[AsyncSession, Depends(get_db)],
 ):
     action = data.action
+
 
     if str(data.service_id) != settings.CLICK_SERVICE_ID:
         return {
             "error": -3,
             "error_note": {
-                "ru": "Сервис не найден",
                 "uz": "Xizmat topilmadi",
+                "ru": "Сервис не найден",
                 "en": "Service not found"
             }
         }
 
-    # ACTION 0: Ma'lumot olish (Check)
+
     if action == 0:
         if not data.params or "contract" not in data.params:
             return {
                 "error": -8,
                 "error_note": {
-                    "ru": "Ошибка в запросе от CLICK",
                     "uz": "CLICK dan so'rovda xatolik",
+                    "ru": "Ошибка в запросе от CLICK",
                     "en": "Error in request from CLICK"
                 }
             }
 
         contract_number = data.params.get("contract")
 
+        # Contract va Student ma'lumotlarini olish
         contract_result = await db.execute(
             select(Contract)
             .options(selectinload(Contract.student))
@@ -109,8 +202,8 @@ async def click_payment(
             return {
                 "error": -5,
                 "error_note": {
-                    "ru": "Договор не найден",
                     "uz": "Shartnoma topilmadi",
+                    "ru": "Договор не найден",
                     "en": "Contract not found"
                 }
             }
@@ -119,8 +212,8 @@ async def click_payment(
             return {
                 "error": -5,
                 "error_note": {
-                    "ru": "Договор не активен. Оплата возможна только по активным договорам",
                     "uz": "Shartnoma faol emas. To'lov faqat faol shartnomalar bo'yicha mumkin",
+                    "ru": "Договор не активен. Оплата возможна только по активным договорам",
                     "en": "Contract is not active. Payment is only possible for active contracts"
                 }
             }
@@ -131,39 +224,72 @@ async def click_payment(
             return {
                 "error": -5,
                 "error_note": {
-                    "ru": "Студент не найден",
                     "uz": "Talaba topilmadi",
+                    "ru": "Студент не найден",
                     "en": "Student not found"
                 }
             }
 
+        # ✅ TRANSLITERATSIYA
+        # Full name
+        first_name = student.first_name or ""
+        last_name = student.last_name or ""
+        full_name = f"{first_name} {last_name}".strip()
+
+        if not full_name:
+            full_name_translations = {"uz": "Noma'lum", "ru": "Неизвестный", "en": "Unknown"}
+        else:
+            full_name_translations = translate_text_field(full_name)
+
+        # Address
+        address_translations = translate_text_field(student.address or "")
+
+        # Contract status
+        status_translations = translate_contract_status(contract.status.value)
+
         return {
             "error": 0,
-            "error_note": {
-                "ru": "Успешно",
-                "uz": "Muvaffaqiyatli",
-                "en": "Success"
-            },
+            "error_note": "Success",
             "params": {
-                "contract": contract.contract_number,
-                "full_name": f"{student.first_name} {student.last_name}",
-                "phone": student.phone or "",
-                "address": student.address or "",
-                "monthly_fee": float(contract.monthly_fee),
-                "contract_status": contract.status.value,
-                "start_date": contract.start_date.isoformat(),
-                "end_date": contract.end_date.isoformat()
+                "contract": {
+                    "uz": contract.contract_number,
+                    "ru": contract.contract_number,
+                    "en": contract.contract_number
+                },
+                "full_name": full_name_translations,
+                "phone": {
+                    "uz": student.phone or "",
+                    "ru": student.phone or "",
+                    "en": student.phone or ""
+                },
+                "address": address_translations,
+                "monthly_fee": {
+                    "uz": float(contract.monthly_fee),
+                    "ru": float(contract.monthly_fee),
+                    "en": float(contract.monthly_fee)
+                },
+                "contract_status": status_translations,
+                "start_date": {
+                    "uz": contract.start_date.isoformat(),
+                    "ru": contract.start_date.isoformat(),
+                    "en": contract.start_date.isoformat()
+                },
+                "end_date": {
+                    "uz": contract.end_date.isoformat(),
+                    "ru": contract.end_date.isoformat(),
+                    "en": contract.end_date.isoformat()
+                }
             }
         }
 
-    # ACTION 1: Prepare (Tayyorlash)
+
     elif action == 1:
         if not verify_signature(data):
             return {
                 "error": -1,
                 "error_note": {
-                    "ru": "SIGN CHECK FAILED!",
                     "uz": "IMZO TEKSHIRUVI MUVAFFAQIYATSIZ!",
+                    "ru": "SIGN CHECK FAILED!",
                     "en": "SIGN CHECK FAILED!"
                 }
             }
@@ -172,8 +298,8 @@ async def click_payment(
             return {
                 "error": -8,
                 "error_note": {
-                    "ru": "Ошибка в запросе от CLICK",
                     "uz": "CLICK dan so'rovda xatolik",
+                    "ru": "Ошибка в запросе от CLICK",
                     "en": "Error in request from CLICK"
                 }
             }
@@ -186,8 +312,8 @@ async def click_payment(
             return {
                 "error": -2,
                 "error_note": {
-                    "ru": "Неверная сумма",
                     "uz": "Noto'g'ri summa",
+                    "ru": "Неверная сумма",
                     "en": "Incorrect amount"
                 }
             }
@@ -203,8 +329,8 @@ async def click_payment(
             return {
                 "error": -5,
                 "error_note": {
-                    "ru": "Договор не найден",
                     "uz": "Shartnoma topilmadi",
+                    "ru": "Договор не найден",
                     "en": "Contract not found"
                 }
             }
@@ -213,24 +339,25 @@ async def click_payment(
             return {
                 "error": -5,
                 "error_note": {
-                    "ru": "Договор не активен",
                     "uz": "Shartnoma faol emas",
+                    "ru": "Договор не активен",
                     "en": "Contract is not active"
                 }
             }
 
-        # ✅ AYNAN TENG BO'LISHI KERAK (kam yoki ko'p emas)
+
         expected_amount = float(contract.monthly_fee)
         if amount != expected_amount:
             return {
                 "error": -2,
                 "error_note": {
-                    "ru": f"Неверная сумма оплаты. Требуется ровно: {expected_amount}",
                     "uz": f"Noto'g'ri to'lov summasi. Aynan kerak: {expected_amount}",
+                    "ru": f"Неверная сумма оплаты. Требуется ровно: {expected_amount}",
                     "en": f"Incorrect payment amount. Required exactly: {expected_amount}"
                 }
             }
 
+        # To'lov yili va oyi
         payment_year = data.params.get("payment_year")
         payment_month = data.params.get("payment_month")
 
@@ -241,8 +368,8 @@ async def click_payment(
                 return {
                     "error": -8,
                     "error_note": {
-                        "ru": "Неверный год оплаты",
                         "uz": "Noto'g'ri to'lov yili",
+                        "ru": "Неверный год оплаты",
                         "en": "Invalid payment year"
                     }
                 }
@@ -256,8 +383,8 @@ async def click_payment(
                 return {
                     "error": -8,
                     "error_note": {
-                        "ru": "Неверный месяц оплаты",
                         "uz": "Noto'g'ri to'lov oyi",
+                        "ru": "Неверный месяц оплаты",
                         "en": "Invalid payment month"
                     }
                 }
@@ -268,8 +395,8 @@ async def click_payment(
             return {
                 "error": -8,
                 "error_note": {
-                    "ru": "Неверный месяц оплаты",
                     "uz": "Noto'g'ri to'lov oyi",
+                    "ru": "Неверный месяц оплаты",
                     "en": "Invalid payment month"
                 }
             }
@@ -283,8 +410,8 @@ async def click_payment(
             return {
                 "error": -5,
                 "error_note": {
-                    "ru": f"Договор еще не начался. Начало: {contract.start_date.isoformat()}",
                     "uz": f"Shartnoma hali boshlanmagan. Boshlanishi: {contract.start_date.isoformat()}",
+                    "ru": f"Договор еще не начался. Начало: {contract.start_date.isoformat()}",
                     "en": f"Contract has not started yet. Start: {contract.start_date.isoformat()}"
                 }
             }
@@ -293,12 +420,13 @@ async def click_payment(
             return {
                 "error": -5,
                 "error_note": {
-                    "ru": f"Договор истек. Окончание: {contract.end_date.isoformat()}",
                     "uz": f"Shartnoma muddati tugagan. Tugash: {contract.end_date.isoformat()}",
+                    "ru": f"Договор истек. Окончание: {contract.end_date.isoformat()}",
                     "en": f"Contract expired. End: {contract.end_date.isoformat()}"
                 }
             }
 
+        # Dublikat tekshirish
         duplicate_check = await db.execute(
             select(Transaction).where(
                 Transaction.contract_id == contract.id,
@@ -328,8 +456,8 @@ async def click_payment(
             return {
                 "error": -4,
                 "error_note": {
-                    "ru": f"Оплата за {month_names_ru[payment_month]} {payment_year} уже существует",
                     "uz": f"{month_names_uz[payment_month]} {payment_year} uchun to'lov allaqachon mavjud",
+                    "ru": f"Оплата за {month_names_ru[payment_month]} {payment_year} уже существует",
                     "en": f"Payment for {month_names_en[payment_month]} {payment_year} already exists"
                 }
             }
@@ -346,8 +474,8 @@ async def click_payment(
                 return {
                     "error": -4,
                     "error_note": {
-                        "ru": "Уже оплачен",
                         "uz": "Allaqachon to'langan",
+                        "ru": "Уже оплачен",
                         "en": "Already paid"
                     }
                 }
@@ -355,8 +483,8 @@ async def click_payment(
                 return {
                     "error": -9,
                     "error_note": {
-                        "ru": "Транзакция отменена",
                         "uz": "Tranzaksiya bekor qilingan",
+                        "ru": "Транзакция отменена",
                         "en": "Transaction cancelled"
                     }
                 }
@@ -365,14 +493,11 @@ async def click_payment(
                 "attempt_trans_id": data.attempt_trans_id,
                 "merchant_prepare_id": existing.id,
                 "error": 0,
-                "error_note": {
-                    "ru": "Успешно",
-                    "uz": "Muvaffaqiyatli",
-                    "en": "Success"
-                },
+                "error_note": "Success",
                 "params": {}
             }
 
+        # Yangi tranzaksiya yaratish
         transaction = Transaction(
             external_id=str(data.click_paydoc_id),
             amount=amount,
@@ -394,22 +519,18 @@ async def click_payment(
             "attempt_trans_id": data.attempt_trans_id,
             "merchant_prepare_id": transaction.id,
             "error": 0,
-            "error_note": {
-                "ru": "Успешно",
-                "uz": "Muvaffaqiyatli",
-                "en": "Success"
-            },
+            "error_note": "Success",
             "params": {}
         }
 
-    # ACTION 2: Complete (Tasdiqlash)
+
     elif action == 2:
         if not verify_signature(data):
             return {
                 "error": -1,
                 "error_note": {
-                    "ru": "SIGN CHECK FAILED!",
                     "uz": "IMZO TEKSHIRUVI MUVAFFAQIYATSIZ!",
+                    "ru": "SIGN CHECK FAILED!",
                     "en": "SIGN CHECK FAILED!"
                 }
             }
@@ -420,12 +541,13 @@ async def click_payment(
             return {
                 "error": -8,
                 "error_note": {
-                    "ru": "Ошибка в запросе от CLICK",
                     "uz": "CLICK dan so'rovda xatolik",
+                    "ru": "Ошибка в запросе от CLICK",
                     "en": "Error in request from CLICK"
                 }
             }
 
+        # Tranzaksiyani topish
         transaction_result = await db.execute(
             select(Transaction).where(Transaction.id == merchant_prepare_id)
         )
@@ -435,8 +557,8 @@ async def click_payment(
             return {
                 "error": -6,
                 "error_note": {
-                    "ru": "Транзакция не найдена",
                     "uz": "Tranzaksiya topilmadi",
+                    "ru": "Транзакция не найдена",
                     "en": "Transaction not found"
                 }
             }
@@ -445,8 +567,8 @@ async def click_payment(
             return {
                 "error": -6,
                 "error_note": {
-                    "ru": "Транзакция не найдена",
                     "uz": "Tranzaksiya topilmadi",
+                    "ru": "Транзакция не найдена",
                     "en": "Transaction not found"
                 }
             }
@@ -458,8 +580,8 @@ async def click_payment(
                 "merchant_confirm_id": transaction.id,
                 "error": -4,
                 "error_note": {
-                    "ru": "Уже оплачен",
                     "uz": "Allaqachon to'langan",
+                    "ru": "Уже оплачен",
                     "en": "Already paid"
                 }
             }
@@ -468,11 +590,12 @@ async def click_payment(
             return {
                 "error": -9,
                 "error_note": {
-                    "ru": "Транзакция отменена",
                     "uz": "Tranzaksiya bekor qilingan",
+                    "ru": "Транзакция отменена",
                     "en": "Transaction cancelled"
                 }
             }
+
 
         contract_result = await db.execute(
             select(Contract).where(Contract.id == transaction.contract_id)
@@ -483,8 +606,8 @@ async def click_payment(
             return {
                 "error": -6,
                 "error_note": {
-                    "ru": "Договор не найден",
                     "uz": "Shartnoma topilmadi",
+                    "ru": "Договор не найден",
                     "en": "Contract not found"
                 }
             }
@@ -493,11 +616,12 @@ async def click_payment(
             return {
                 "error": -5,
                 "error_note": {
-                    "ru": "Договор не активен",
                     "uz": "Shartnoma faol emas",
+                    "ru": "Договор не активен",
                     "en": "Contract is not active"
                 }
             }
+
 
         payment_year = transaction.payment_year
         payment_month = transaction.payment_months[0] if transaction.payment_months else datetime.now().month
@@ -511,12 +635,13 @@ async def click_payment(
             return {
                 "error": -5,
                 "error_note": {
-                    "ru": "Договор истек или еще не начался",
                     "uz": "Shartnoma muddati tugagan yoki hali boshlanmagan",
+                    "ru": "Договор истек или еще не начался",
                     "en": "Contract expired or not started yet"
                 }
             }
 
+        # Final dublikat tekshirish
         final_duplicate_check = await db.execute(
             select(Transaction).where(
                 Transaction.contract_id == contract.id,
@@ -535,11 +660,12 @@ async def click_payment(
             return {
                 "error": -4,
                 "error_note": {
-                    "ru": "Оплата за этот месяц уже существует",
                     "uz": "Ushbu oy uchun to'lov allaqachon mavjud",
+                    "ru": "Оплата за этот месяц уже существует",
                     "en": "Payment for this month already exists"
                 }
             }
+
 
         transaction.status = PaymentStatus.SUCCESS
         transaction.paid_at = datetime.utcnow()
@@ -553,21 +679,18 @@ async def click_payment(
             "attempt_trans_id": data.attempt_trans_id,
             "merchant_confirm_id": transaction.id,
             "error": 0,
-            "error_note": {
-                "ru": "Успешно",
-                "uz": "Muvaffaqiyatli",
-                "en": "Success"
-            },
+            "error_note": "Success",
             "params": {}
         }
 
-    # Noma'lum action
+
     else:
         return {
             "error": -3,
             "error_note": {
-                "ru": "Действие не найдено",
                 "uz": "Harakat topilmadi",
+                "ru": "Действие не найдено",
                 "en": "Action not found"
             }
         }
+
