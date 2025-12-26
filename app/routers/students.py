@@ -1470,6 +1470,15 @@ async def get_student_full_info(
     )
     attendances = attendances_result.scalars().all()
 
+    # Calculate total payments (only SUCCESS status)
+    from app.models.enums import PaymentStatus, ContractStatus
+    total_payments = sum(
+        t.amount for t in transactions if t.status == PaymentStatus.SUCCESS
+    )
+
+    # Count active contracts
+    active_contracts_count = sum(1 for c in contracts if c.status == ContractStatus.ACTIVE)
+
     # Build the full info response
     from app.schemas.group import GroupRead
     from app.schemas.auth import UserRead
@@ -1482,6 +1491,8 @@ async def get_student_full_info(
         coach=UserRead.model_validate(coach) if coach else None,
         transactions=[TransactionRead.model_validate(t) for t in transactions],
         attendances=[AttendanceRead.model_validate(a) for a in attendances],
+        total_payments=total_payments,
+        active_contracts_count=active_contracts_count,
     )
 
     return DataResponse(data=full_info)
