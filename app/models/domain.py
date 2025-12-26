@@ -53,7 +53,8 @@ class Group(Base, TimestampMixin):
 
     id: Mapped[int] = mapped_column(primary_key=True, index=True)
     name: Mapped[str] = mapped_column(String(100), nullable=False)
-    identifier: Mapped[str] = mapped_column(String(10), unique=True, nullable=False, index=True)
+    # Unique constraint handled by partial index in database (unique only for non-DELETED groups)
+    identifier: Mapped[str] = mapped_column(String(10), nullable=False, index=True)
     description: Mapped[str | None] = mapped_column(Text, nullable=True)
     schedule_days: Mapped[str | None] = mapped_column(String(255), nullable=True)
     schedule_time: Mapped[str | None] = mapped_column(String(50), nullable=True)

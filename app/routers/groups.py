@@ -293,7 +293,7 @@ async def update_group(
     """
     Update group details.
 
-    Identifier must remain unique (enforced by database constraint).
+    Note: Identifier cannot be changed after creation for data integrity.
     Multiple groups can have the same birth year as long as identifiers are different.
     """
     result = await db.execute(select(Group).where(Group.id == group_id))
@@ -304,21 +304,12 @@ async def update_group(
 
     update_data = data.model_dump(exclude_unset=True)
 
-    # Check if identifier is being changed and if it already exists (excluding DELETED groups)
-    if "identifier" in update_data and update_data["identifier"] != group.identifier:
-        existing_identifier = await db.execute(
-            select(Group).where(
-                and_(
-                    Group.identifier == update_data["identifier"],
-                    Group.status != GroupStatus.DELETED
-                )
-            )
+    # Prevent identifier from being changed
+    if "identifier" in update_data:
+        raise HTTPException(
+            status_code=400,
+            detail="Identifier cannot be changed after group creation. Please create a new group if you need a different identifier."
         )
-        if existing_identifier.scalar_one_or_none():
-            raise HTTPException(
-                status_code=400,
-                detail=f"Identifier '{update_data['identifier']}' already exists. Please use a unique identifier."
-            )
 
     if "coach_id" in update_data and update_data["coach_id"] is not None:
         from app.models.auth import User
