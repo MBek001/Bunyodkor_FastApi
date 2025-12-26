@@ -958,19 +958,18 @@ class ContractPDFGenerator:
             print(f"✓ Шартнома муваффақиятли яратилди: {output_file}")
             image_urls = []
             data = self.data
-            # Agar JSONda bo‘lsa (upload qilingan fayllar S3 yo‘li)
-            for key in ["passport_copy_url", "form_086_url", "heart_checkup_url", "birth_certificate_url"]:
-                val = data.get(key)
-                if val:
-                    image_urls.append(val)
 
-            # contract_images_urls agar JSON string bo‘lsa — decode qilamiz
+            # 1. Passport copy birinchi
+            passport = data.get("passport_copy_url")
+            if passport:
+                image_urls.append(passport)
+
+            # 2. Contract images (shartnoma rasmlari)
             contract_imgs = data.get("contract_images_urls")
-
             if contract_imgs:
                 if isinstance(contract_imgs, str):
                     try:
-                        # JSON string bo‘lsa
+                        # JSON string bo'lsa
                         parsed = json.loads(contract_imgs)
                         if isinstance(parsed, list):
                             image_urls.extend(parsed)
@@ -979,12 +978,18 @@ class ContractPDFGenerator:
                     except json.JSONDecodeError:
                         image_urls.append(contract_imgs)
                 elif isinstance(contract_imgs, list):
-                    # ro‘yxat bo‘lsa
+                    # ro'yxat bo'lsa
                     image_urls.extend(contract_imgs)
                 elif isinstance(contract_imgs, dict):
-                    print("⚠️ contract_images_urls dict bo‘ldi, o‘tkazib yuborildi.")
+                    print("⚠️ contract_images_urls dict bo'ldi, o'tkazib yuborildi.")
                 else:
-                    print(f"⚠️ contract_images_urls turi noma’lum: {type(contract_imgs)}")
+                    print(f"⚠️ contract_images_urls turi noma'lum: {type(contract_imgs)}")
+
+            # 3. Qolgan hujjatlar (form_086, heart_checkup, birth_certificate)
+            for key in ["form_086_url", "heart_checkup_url", "birth_certificate_url"]:
+                val = data.get(key)
+                if val:
+                    image_urls.append(val)
 
             if image_urls:
                 print(f"🖼 {len(image_urls)} ta ilova fayl PDFga qo‘shilmoqda...")
