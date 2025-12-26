@@ -268,34 +268,14 @@ async def click_payment(
             "error": 0,
             "error_note": "Success",
             "params": {
-                "contract": {
-                    "Shartnoma raqami": contract.contract_number,
-                    "Номер договора": contract.contract_number,
-                    "Contract number": contract.contract_number
-                },
-                "full_name": full_name_data,
-                "phone": {
-                    "Telefon raqami": student.phone or "",
-                    "Номер телефона": student.phone or "",
-                    "Phone number": student.phone or ""
-                },
+                "contract":contract.contract_number,
+                "full_name": full_name,
+                "phone": student.phone,
                 "address": address_data,
-                "monthly_fee": {
-                    "Oylik to'lov": float(contract.monthly_fee),
-                    "Ежемесячная плата": float(contract.monthly_fee),
-                    "Monthly fee": float(contract.monthly_fee)
-                },
-                "contract_status": status_translations,
-                "start_date": {
-                    "Boshlanish sanasi": contract.start_date.isoformat(),
-                    "Дата начала": contract.start_date.isoformat(),
-                    "Start date": contract.start_date.isoformat()
-                },
-                "end_date": {
-                    "Tugash sanasi": contract.end_date.isoformat(),
-                    "Дата окончания": contract.end_date.isoformat(),
-                    "End date": contract.end_date.isoformat()
-                }
+                "monthly_fee":float(contract.monthly_fee),
+                "contract_status": contract.status.value,
+                "start_date": contract.start_date.isoformat(),
+                "end_date":contract.end_date.isoformat()
             }
         }
 
