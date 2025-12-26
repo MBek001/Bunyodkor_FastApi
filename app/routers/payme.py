@@ -913,8 +913,6 @@ async def perform_transaction(params: dict, request_id: int, db: AsyncSession):
 async def check_transaction(params: dict, request_id: int, db: AsyncSession):
     payme_id = params.get("id")
 
-    print(f"🔍 CheckTransaction: Looking for payme_id = {payme_id}")
-
     if not payme_id:
         return {
             "error": {
@@ -938,7 +936,6 @@ async def check_transaction(params: dict, request_id: int, db: AsyncSession):
     transaction = transaction_result.scalar_one_or_none()
 
     if not transaction:
-        print(f"❌ Transaction NOT FOUND for payme_id: {payme_id}")
         return {
             "error": {
                 "code": PaymeError.TRANSACTION_NOT_FOUND,
@@ -951,6 +948,7 @@ async def check_transaction(params: dict, request_id: int, db: AsyncSession):
             "id": request_id
         }
 
+    # SUCCESS
     if transaction.status == PaymentStatus.SUCCESS:
         return create_success_response(
             {
@@ -964,10 +962,12 @@ async def check_transaction(params: dict, request_id: int, db: AsyncSession):
             request_id
         )
 
+    # ✅ CANCELLED - state ni to'g'ri aniqlash
     if transaction.status == PaymentStatus.CANCELLED:
-        perform_time = 0
-        if transaction.paid_at:
-            perform_time = int(transaction.paid_at.timestamp() * 1000)
+        # Agar paid_at bo'lsa → SUCCESS dan cancel bo'lgan → -2
+        # Aks holda → PENDING dan cancel bo'lgan → -1
+        state = -2 if transaction.paid_at else -1
+        perform_time = int(transaction.paid_at.timestamp() * 1000) if transaction.paid_at else 0
 
         return create_success_response(
             {
@@ -975,12 +975,13 @@ async def check_transaction(params: dict, request_id: int, db: AsyncSession):
                 "perform_time": perform_time,
                 "cancel_time": int(transaction.updated_at.timestamp() * 1000) if transaction.updated_at else 0,
                 "transaction": str(transaction.id),
-                "state": -2,
+                "state": state,  # ✅ To'g'ri state
                 "reason": 5
             },
             request_id
         )
 
+    # PENDING
     return create_success_response(
         {
             "create_time": int(transaction.created_at.timestamp() * 1000),
