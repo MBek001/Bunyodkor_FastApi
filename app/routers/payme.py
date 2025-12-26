@@ -152,6 +152,8 @@ async def payme_payment(
 
     elif method == "CancelTransaction":
         return await cancel_transaction(params, request_id, db)
+    elif method == "GetStatement":  # ✅ YANGI METOD
+        return await get_statement(params, request_id, db)
 
     else:
         return create_error_response(
@@ -1034,6 +1036,110 @@ async def cancel_transaction(params: dict, request_id: int, db: AsyncSession):
             "transaction": str(transaction.id),
             "state": -2,
             "reason": reason
+        },
+        request_id
+    )
+
+
+async def get_statement(params: dict, request_id: int, db: AsyncSession):
+    """
+    Payme hisobotlari uchun tranzaksiyalar ro'yxatini qaytarish
+
+    Talablar:
+    1. from <= created_at <= to
+    2. Faqat CreateTransaction orqali yaratilgan tranzaksiyalar
+    3. created_at bo'yicha o'sish tartibida saralash
+    """
+    from_time = params.get("from")
+    to_time = params.get("to")
+
+    if from_time is None or to_time is None:
+        return {
+            "error": {
+                "code": PaymeError.INVALID_PARAMS,
+                "message": {
+                    "ru": "Неверные параметры",
+                    "uz": "Noto'g'ri parametrlar",
+                    "en": "Invalid parameters"
+                }
+            },
+            "id": request_id
+        }
+
+    # Timestamp'larni datetime ga o'tkazish (milliseconds)
+    from datetime import datetime as dt
+    from_datetime = dt.fromtimestamp(from_time / 1000.0)
+    to_datetime = dt.fromtimestamp(to_time / 1000.0)
+
+    print(f"📊 GetStatement: from {from_datetime} to {to_datetime}")
+
+    # Tranzaksiyalarni olish
+    transactions_result = await db.execute(
+        select(Transaction)
+        .where(
+            Transaction.source == PaymentSource.PAYME,
+            Transaction.created_at >= from_datetime,
+            Transaction.created_at <= to_datetime
+        )
+        .order_by(Transaction.created_at.asc())  # O'sish tartibida
+    )
+    transactions = transactions_result.scalars().all()
+
+    print(f"✅ Found {len(transactions)} transactions")
+
+    # Javobni tayyorlash
+    transactions_list = []
+
+    for trans in transactions:
+        # Contract ma'lumotlarini olish
+        contract_result = await db.execute(
+            select(Contract).where(Contract.id == trans.contract_id)
+        )
+        contract = contract_result.scalar_one_or_none()
+
+        # State aniqlash
+        if trans.status == PaymentStatus.SUCCESS:
+            state = 2
+        elif trans.status == PaymentStatus.CANCELLED:
+            state = -2
+        else:
+            state = 1
+
+        # Perform time
+        perform_time = 0
+        if trans.paid_at:
+            perform_time = int(trans.paid_at.timestamp() * 1000)
+
+        # Cancel time
+        cancel_time = 0
+        if trans.status == PaymentStatus.CANCELLED and trans.updated_at:
+            cancel_time = int(trans.updated_at.timestamp() * 1000)
+
+        # Reason
+        reason = None
+        if trans.status == PaymentStatus.CANCELLED:
+            reason = 5  # Cancelled by timeout or user
+
+        transactions_list.append({
+            "id": trans.external_id,  # Payme ID
+            "time": int(trans.created_at.timestamp() * 1000),  # Create time in Payme
+            "amount": int(trans.amount),
+            "account": {
+                "contract": contract.contract_number if contract else "",
+                "payment_year": trans.payment_year,
+                "payment_month": trans.payment_months[0] if trans.payment_months else None
+            },
+            "create_time": int(trans.created_at.timestamp() * 1000),
+            "perform_time": perform_time,
+            "cancel_time": cancel_time,
+            "transaction": str(trans.id),  # Bizning ID
+            "state": state,
+            "reason": reason
+        })
+
+    return create_success_response(
+        {
+            "transactions": transactions_list
         },
         request_id
     )
