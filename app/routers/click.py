@@ -35,28 +35,22 @@ class ClickRequest(BaseModel):
 PARAMS_ORDER = ["contract", "full_name", "service_type", "amount", "payment_month", "payment_year"]
 
 
-
 def cyrillic_to_latin(text: str) -> str:
     if not text:
         return text
 
     cyrillic_map = {
-
         'А': 'A', 'Б': 'B', 'В': 'V', 'Г': 'G', 'Д': 'D', 'Е': 'E', 'Ё': 'Yo',
         'Ж': 'J', 'З': 'Z', 'И': 'I', 'Й': 'Y', 'К': 'K', 'Л': 'L', 'М': 'M',
         'Н': 'N', 'О': 'O', 'П': 'P', 'Р': 'R', 'С': 'S', 'Т': 'T', 'У': 'U',
         'Ф': 'F', 'Х': 'X', 'Ц': 'Ts', 'Ч': 'Ch', 'Ш': 'Sh', 'Щ': 'Shch', 'Ъ': "'",
         'Ы': 'I', 'Ь': '', 'Э': 'E', 'Ю': 'Yu', 'Я': 'Ya',
-        # O'zbek maxsus harflari
         'Ғ': 'G\'', 'Қ': 'Q', 'Ў': 'O\'', 'Ҳ': 'H',
-
-        # Kichik harflar
         'а': 'a', 'б': 'b', 'в': 'v', 'г': 'g', 'д': 'd', 'е': 'e', 'ё': 'yo',
         'ж': 'j', 'з': 'z', 'и': 'i', 'й': 'y', 'к': 'k', 'л': 'l', 'м': 'm',
         'н': 'n', 'о': 'o', 'п': 'p', 'р': 'r', 'с': 's', 'т': 't', 'у': 'u',
         'ф': 'f', 'х': 'x', 'ц': 'ts', 'ч': 'ch', 'ш': 'sh', 'щ': 'shch', 'ъ': "'",
         'ы': 'i', 'ь': '', 'э': 'e', 'ю': 'yu', 'я': 'ya',
-
         'ғ': 'g\'', 'қ': 'q', 'ў': 'o\'', 'ҳ': 'h'
     }
 
@@ -72,27 +66,53 @@ def is_cyrillic(text: str) -> bool:
     return bool(re.search('[а-яА-ЯёЁўҮғҒқҚҳҲ]', text))
 
 
-def translate_text_field(text: str) -> dict:
-
+def translate_full_name(text: str) -> dict:
     if not text:
-        return {"uz": "", "ru": "", "en": ""}
+        return {
+            "FISH": "",
+            "ФИО": "",
+            "Full name": ""
+        }
 
     text = text.strip()
 
     if is_cyrillic(text):
-
         latin_version = cyrillic_to_latin(text)
         return {
-            "uz": latin_version,
-            "ru": text,
-            "en": latin_version
+            "FISH": latin_version,
+            "ФИО": text,
+            "Full name": latin_version
         }
     else:
-
         return {
-            "uz": text,
-            "ru": text,
-            "en": text
+            "FISH": text,
+            "ФИО": text,
+            "Full name": text
+        }
+
+
+def translate_address(text: str) -> dict:
+    if not text:
+        return {
+            "Manzil": "",
+            "Адрес": "",
+            "Address": ""
+        }
+
+    text = text.strip()
+
+    if is_cyrillic(text):
+        latin_version = cyrillic_to_latin(text)
+        return {
+            "Manzil": latin_version,
+            "Адрес": text,
+            "Address": latin_version
+        }
+    else:
+        return {
+            "Manzil": text,
+            "Адрес": text,
+            "Address": text
         }
 
 
@@ -120,7 +140,6 @@ def translate_contract_status(status: str) -> dict:
         }
     }
     return translations.get(status.lower(), {"uz": status, "ru": status, "en": status})
-
 
 
 def md5_hash(value: str) -> str:
@@ -156,15 +175,12 @@ def verify_signature(data: ClickRequest) -> bool:
     return calculated_sign == data.sign_string
 
 
-
-
 @router.post("/payment")
 async def click_payment(
         data: ClickRequest,
         db: Annotated[AsyncSession, Depends(get_db)],
 ):
     action = data.action
-
 
     if str(data.service_id) != settings.CLICK_SERVICE_ID:
         return {
@@ -175,7 +191,6 @@ async def click_payment(
                 "en": "Service not found"
             }
         }
-
 
     if action == 0:
         if not data.params or "contract" not in data.params:
@@ -190,7 +205,6 @@ async def click_payment(
 
         contract_number = data.params.get("contract")
 
-        # Contract va Student ma'lumotlarini olish
         contract_result = await db.execute(
             select(Contract)
             .options(selectinload(Contract.student))
@@ -230,21 +244,21 @@ async def click_payment(
                 }
             }
 
-        # ✅ TRANSLITERATSIYA
-        # Full name
         first_name = student.first_name or ""
         last_name = student.last_name or ""
         full_name = f"{first_name} {last_name}".strip()
 
         if not full_name:
-            full_name_translations = {"uz": "Noma'lum", "ru": "Неизвестный", "en": "Unknown"}
+            full_name_data = {
+                "FISH": "Noma'lum",
+                "ФИО": "Неизвестный",
+                "Full name": "Unknown"
+            }
         else:
-            full_name_translations = translate_text_field(full_name)
+            full_name_data = translate_full_name(full_name)
 
-        # Address
-        address_translations = translate_text_field(student.address or "")
+        address_data = translate_address(student.address or "")
 
-        # Contract status
         status_translations = translate_contract_status(contract.status.value)
 
         return {
@@ -256,13 +270,13 @@ async def click_payment(
                     "ru": contract.contract_number,
                     "en": contract.contract_number
                 },
-                "full_name": full_name_translations,
+                "full_name": full_name_data,
                 "phone": {
                     "uz": student.phone or "",
                     "ru": student.phone or "",
                     "en": student.phone or ""
                 },
-                "address": address_translations,
+                "address": address_data,
                 "monthly_fee": {
                     "uz": float(contract.monthly_fee),
                     "ru": float(contract.monthly_fee),
@@ -281,7 +295,6 @@ async def click_payment(
                 }
             }
         }
-
 
     elif action == 1:
         if not verify_signature(data):
@@ -345,7 +358,6 @@ async def click_payment(
                 }
             }
 
-
         expected_amount = float(contract.monthly_fee)
         if amount != expected_amount:
             return {
@@ -357,7 +369,6 @@ async def click_payment(
                 }
             }
 
-        # To'lov yili va oyi
         payment_year = data.params.get("payment_year")
         payment_month = data.params.get("payment_month")
 
@@ -426,7 +437,6 @@ async def click_payment(
                 }
             }
 
-        # Dublikat tekshirish
         duplicate_check = await db.execute(
             select(Transaction).where(
                 Transaction.contract_id == contract.id,
@@ -497,7 +507,6 @@ async def click_payment(
                 "params": {}
             }
 
-        # Yangi tranzaksiya yaratish
         transaction = Transaction(
             external_id=str(data.click_paydoc_id),
             amount=amount,
@@ -523,7 +532,6 @@ async def click_payment(
             "params": {}
         }
 
-
     elif action == 2:
         if not verify_signature(data):
             return {
@@ -547,7 +555,6 @@ async def click_payment(
                 }
             }
 
-        # Tranzaksiyani topish
         transaction_result = await db.execute(
             select(Transaction).where(Transaction.id == merchant_prepare_id)
         )
@@ -596,7 +603,6 @@ async def click_payment(
                 }
             }
 
-
         contract_result = await db.execute(
             select(Contract).where(Contract.id == transaction.contract_id)
         )
@@ -622,7 +628,6 @@ async def click_payment(
                 }
             }
 
-
         payment_year = transaction.payment_year
         payment_month = transaction.payment_months[0] if transaction.payment_months else datetime.now().month
 
@@ -641,7 +646,6 @@ async def click_payment(
                 }
             }
 
-        # Final dublikat tekshirish
         final_duplicate_check = await db.execute(
             select(Transaction).where(
                 Transaction.contract_id == contract.id,
@@ -666,7 +670,6 @@ async def click_payment(
                 }
             }
 
-
         transaction.status = PaymentStatus.SUCCESS
         transaction.paid_at = datetime.utcnow()
         transaction.comment = f"Click confirmed: attempt {data.attempt_trans_id}, month {payment_month}/{payment_year}"
@@ -683,7 +686,6 @@ async def click_payment(
             "params": {}
         }
 
-
     else:
         return {
             "error": -3,
@@ -693,4 +695,3 @@ async def click_payment(
                 "en": "Action not found"
             }
         }
-
