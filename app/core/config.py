@@ -17,6 +17,8 @@ class Settings(BaseSettings):
     CLICK_SERVICE_ID: str = ""
     CLICK_SECRET_KEY: str = ""
     CLICK_CALLBACK_URL: str = ""
+    CLICK_AUTH_USERNAME: str = ""
+    CLICK_AUTH_PASSWORD: str = ""
 
     SMS_PROVIDER_API_KEY: str = ""
     SMS_PROVIDER_URL: str = ""

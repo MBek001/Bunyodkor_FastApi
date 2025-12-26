@@ -1,5 +1,6 @@
 from typing import Annotated
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Header, HTTPException, status
+from fastapi.security import HTTPBasic, HTTPBasicCredentials
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, cast
 from sqlalchemy.dialects.postgresql import JSONB
@@ -8,6 +9,7 @@ from datetime import datetime
 import hashlib
 from pydantic import BaseModel
 import re
+import secrets
 
 from app.core.db import get_db
 from app.core.config import settings
@@ -16,6 +18,7 @@ from app.models.finance import Transaction
 from app.models.enums import PaymentSource, PaymentStatus, ContractStatus
 
 router = APIRouter(prefix="/click", tags=["Click Payment"])
+security = HTTPBasic()
 
 
 class ClickRequest(BaseModel):
@@ -33,6 +36,19 @@ class ClickRequest(BaseModel):
 
 
 PARAMS_ORDER = ["contract", "full_name", "service_type", "amount", "payment_month", "payment_year"]
+
+
+def verify_basic_auth(credentials: HTTPBasicCredentials) -> bool:
+
+    correct_username = secrets.compare_digest(
+        credentials.username.encode("utf8"),
+        settings.CLICK_AUTH_USERNAME.encode("utf8")
+    )
+    correct_password = secrets.compare_digest(
+        credentials.password.encode("utf8"),
+        settings.CLICK_AUTH_PASSWORD.encode("utf8")
+    )
+    return correct_username and correct_password
 
 
 def cyrillic_to_latin(text: str) -> str:
@@ -183,7 +199,46 @@ def verify_signature(data: ClickRequest) -> bool:
 async def click_payment(
         data: ClickRequest,
         db: Annotated[AsyncSession, Depends(get_db)],
+        credentials: Annotated[HTTPBasicCredentials, Depends(security)],
+        content_type: Annotated[str | None, Header()] = None,
 ):
+    """
+    Click payment endpoint with Basic Auth and Content-Type validation.
+
+    Requires:
+    - Content-Type: application/json
+    - Authorization: Basic <base64(username:password)>
+    """
+
+    # Validate Content-Type header
+    if not content_type or content_type.lower() != "application/json":
+        raise HTTPException(
+            status_code=status.HTTP_415_UNSUPPORTED_MEDIA_TYPE,
+            detail={
+                "error": -8,
+                "error_note": {
+                    "uz": "Content-Type application/json bo'lishi kerak",
+                    "ru": "Content-Type должен быть application/json",
+                    "en": "Content-Type must be application/json"
+                }
+            }
+        )
+
+    # Verify Basic Authentication
+    if not verify_basic_auth(credentials):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail={
+                "error": -1,
+                "error_note": {
+                    "uz": "Autentifikatsiya xatosi",
+                    "ru": "Ошибка аутентификации",
+                    "en": "Authentication failed"
+                }
+            },
+            headers={"WWW-Authenticate": "Basic"},
+        )
+
     action = data.action
 
     if str(data.service_id) != settings.CLICK_SERVICE_ID:
@@ -268,14 +323,14 @@ async def click_payment(
             "error": 0,
             "error_note": "Success",
             "params": {
-                "contract":contract.contract_number,
+                "contract": contract.contract_number,
                 "full_name": full_name,
                 "phone": student.phone,
                 "address": student.address,
-                "monthly_fee":float(contract.monthly_fee),
+                "monthly_fee": float(contract.monthly_fee),
                 "contract_status": contract.status.value,
                 "start_date": contract.start_date.isoformat(),
-                "end_date":contract.end_date.isoformat()
+                "end_date": contract.end_date.isoformat()
             }
         }
 
