@@ -202,10 +202,15 @@ async def change_password(params: dict, request_id: int, request: Request):
 
 
 async def check_perform_transaction(params: dict, request_id: int, db: AsyncSession):
+    """
+    2 bosqichli tekshiruv:
+    1. Faqat contract → student ma'lumotlarini ko'rsatish
+    2. Contract + amount + year + month → to'lovni tasdiqlash
+    """
     amount = params.get("amount")
     account = params.get("account", {})
 
-    if not amount or not account:
+    if not account:
         return {
             "error": {
                 "code": PaymeError.INVALID_PARAMS,
@@ -233,6 +238,7 @@ async def check_perform_transaction(params: dict, request_id: int, db: AsyncSess
             "id": request_id
         }
 
+    # Contract va Student ni olish
     contract_result = await db.execute(
         select(Contract)
         .options(selectinload(Contract.student))
@@ -267,6 +273,30 @@ async def check_perform_transaction(params: dict, request_id: int, db: AsyncSess
             },
             "id": request_id
         }
+
+    student = contract.student
+
+    # ✅ BOSQICH 1: Faqat contract (student ma'lumotlarini ko'rish)
+    if not amount:
+        print("📋 Step 1: Showing student info only")
+        return create_success_response(
+            {
+                "allow": True,
+                "additional": {
+                    "name": f"{student.first_name} {student.last_name}",
+                    "phone": student.phone or "",
+                    "contract_status": contract.status.value,
+                    "contract_number": contract.contract_number,
+                    "monthly_fee": float(contract.monthly_fee),
+                    "start_date": contract.start_date.isoformat(),
+                    "end_date": contract.end_date.isoformat()
+                }
+            },
+            request_id
+        )
+
+    # ✅ BOSQICH 2: To'liq ma'lumot (to'lovni tasdiqlash)
+    print("💰 Step 2: Full payment validation")
 
     amount_sum = float(amount)
     expected_amount = float(contract.monthly_fee)
@@ -405,8 +435,7 @@ async def check_perform_transaction(params: dict, request_id: int, db: AsyncSess
             "id": request_id
         }
 
-    student = contract.student
-
+    # To'liq validatsiya o'tdi
     return create_success_response(
         {
             "allow": True,
