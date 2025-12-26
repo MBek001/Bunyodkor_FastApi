@@ -361,7 +361,7 @@ class ContractPDFGenerator:
         right_text = (
             "«BUNYODKOR» ФА<br/>"
             "Директорга<br/>"
-            "<b>Ш.Н.Саидовага</b>"
+            "<b>Ш.Н.Саидовга</b>"
         )
         right_block = Paragraph(right_text, right_style)
 
