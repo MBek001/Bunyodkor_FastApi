@@ -991,26 +991,25 @@ class ContractPDFGenerator:
             if birth_cert:
                 image_urls.append(birth_cert)
 
-            # 4. Birth certificate back (optional) - contract_image_5 (index 4)
-            if len(contract_imgs_list) > 4 and contract_imgs_list[4]:
-                image_urls.append(contract_imgs_list[4])
+            # 4. Birth certificate back (optional) - contract_image_1 (index 0)
+            if len(contract_imgs_list) > 0 and contract_imgs_list[0]:
+                image_urls.append(contract_imgs_list[0])
 
-            # 5. Father passport front (ota pasport oldi)
-            passport = data.get("passport_copy_url")
-            if passport:
-                image_urls.append(passport)
+            # 5. Father passport front (mandatory) - contract_image_2 (index 1)
+            if len(contract_imgs_list) > 1 and contract_imgs_list[1]:
+                image_urls.append(contract_imgs_list[1])
 
             # 6. Father passport back (optional) - contract_image_3 (index 2)
             if len(contract_imgs_list) > 2 and contract_imgs_list[2]:
                 image_urls.append(contract_imgs_list[2])
 
-            # 7. Mother passport front (optional) - contract_image_2 (index 1)
-            if len(contract_imgs_list) > 1 and contract_imgs_list[1]:
-                image_urls.append(contract_imgs_list[1])
-
-            # 8. Mother passport back (optional) - contract_image_4 (index 3)
+            # 7. Mother passport front (mandatory) - contract_image_4 (index 3)
             if len(contract_imgs_list) > 3 and contract_imgs_list[3]:
                 image_urls.append(contract_imgs_list[3])
+
+            # 8. Mother passport back (optional) - contract_image_5 (index 4)
+            if len(contract_imgs_list) > 4 and contract_imgs_list[4]:
+                image_urls.append(contract_imgs_list[4])
 
             if image_urls:
                 print(f"🖼 {len(image_urls)} ta ilova fayl PDFga qo‘shilmoqda...")

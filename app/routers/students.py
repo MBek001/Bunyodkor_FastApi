@@ -968,15 +968,15 @@ async def create_student_with_contract(
     contract_data: str = Form(..., description="Contract data as JSON"),
 
     # ========== DOCUMENT FILES (FormData) ==========
-    passport_copy: UploadFile = File(..., description="Father passport (front side)"),
+    passport_copy: UploadFile = File(..., description="Profile photo / Father passport (used as profile image)"),
     form_086: UploadFile = File(..., description="Medical form 086 file"),
     heart_checkup: UploadFile = File(..., description="Heart checkup document file"),
     birth_certificate: UploadFile = File(..., description="Birth certificate (front side)"),
-    contract_image_1: UploadFile | None = File(None, description="Profile photo (optional)"),
-    contract_image_2: UploadFile | None = File(None, description="Mother passport front (optional)"),
+    contract_image_1: UploadFile | None = File(None, description="Birth certificate back (optional)"),
+    contract_image_2: UploadFile = File(..., description="Father passport front (mandatory)"),
     contract_image_3: UploadFile | None = File(None, description="Father passport back (optional)"),
-    contract_image_4: UploadFile | None = File(None, description="Mother passport back (optional)"),
-    contract_image_5: UploadFile | None = File(None, description="Birth certificate back (optional)"),
+    contract_image_4: UploadFile = File(..., description="Mother passport front (mandatory)"),
+    contract_image_5: UploadFile | None = File(None, description="Mother passport back (optional)"),
 
 ):
     """
@@ -1145,22 +1145,36 @@ async def create_student_with_contract(
                 f.file.seek(0)
 
         # Asosiy hujjatlar
-        passport_copy_url = await upload_image_to_s3(passport_copy, "student-documents")
+        passport_copy_url = await upload_image_to_s3(passport_copy, "student-documents")  # Profile image
         form_086_url = await upload_image_to_s3(form_086, "student-documents")
         heart_checkup_url = await upload_image_to_s3(heart_checkup, "student-documents")
         birth_certificate_url = await upload_image_to_s3(birth_certificate, "student-documents")
 
+        # Contract images (passports)
         contract_images_urls = []
+        # Index 0: birth certificate back (optional)
         if contract_image_1:
             contract_images_urls.append(await upload_image_to_s3(contract_image_1, "contracts"))
-        if contract_image_2:
-            contract_images_urls.append(await upload_image_to_s3(contract_image_2, "contracts"))
+        else:
+            contract_images_urls.append(None)
+
+        # Index 1: father passport front (mandatory)
+        contract_images_urls.append(await upload_image_to_s3(contract_image_2, "contracts"))
+
+        # Index 2: father passport back (optional)
         if contract_image_3:
             contract_images_urls.append(await upload_image_to_s3(contract_image_3, "contracts"))
-        if contract_image_4:
-            contract_images_urls.append(await upload_image_to_s3(contract_image_4, "contracts"))
+        else:
+            contract_images_urls.append(None)
+
+        # Index 3: mother passport front (mandatory)
+        contract_images_urls.append(await upload_image_to_s3(contract_image_4, "contracts"))
+
+        # Index 4: mother passport back (optional)
         if contract_image_5:
             contract_images_urls.append(await upload_image_to_s3(contract_image_5, "contracts"))
+        else:
+            contract_images_urls.append(None)
 
 
     except Exception as e:
@@ -1316,9 +1330,8 @@ async def create_student_with_contract(
             "oylik_narx_sozlar": "sum"  # You can add number-to-words conversion here
         }
     }
-    # Agar contract_image_1 mavjud bo‘lsa — birinchi sahifadagi student_image sifatida ishlatamiz
-    if contract_images_urls and len(contract_images_urls) > 0:
-        pdf_data["student"]["student_image"] = contract_images_urls[0]
+    # passport_copy ni profile image sifatida ishlatamiz
+    pdf_data["student"]["student_image"] = passport_copy_url
 
     # Generate PDF with attachments (images at the end)
     import time
@@ -1328,39 +1341,21 @@ async def create_student_with_contract(
     temp_pdf.close()
 
     try:
+        # Add URLs to pdf_data for contract_pdf.py to use
+        pdf_data["passport_copy_url"] = passport_copy_url
+        pdf_data["form_086_url"] = form_086_url
+        pdf_data["heart_checkup_url"] = heart_checkup_url
+        pdf_data["birth_certificate_url"] = birth_certificate_url
+        pdf_data["contract_images_urls"] = contract_images_urls
+
         generator = ContractPDFGenerator(pdf_data)
 
-        # Generate base PDF (contract text only)
-        base_pdf_path = generator.generate(pdf_path)
+        # Generate PDF with all attachments (contract_pdf.py handles ordering)
+        final_pdf_path = generator.generate(pdf_path)
 
         # Check if generation was successful
-        if not base_pdf_path or not isinstance(base_pdf_path, (str, os.PathLike)):
-            raise ValueError(f"PDF generation failed: {type(base_pdf_path)}")
-
-        # Add attachments (images) at the end of PDF - each image on separate page
-        final_pdf = tempfile.NamedTemporaryFile(delete=False, suffix=".pdf")
-        final_pdf_path = final_pdf.name
-        final_pdf.close()
-
-        # Collect all image URLs for attachments
-        attachment_urls = []
-        if passport_copy_url:
-            attachment_urls.append(passport_copy_url)
-        if form_086_url:
-            attachment_urls.append(form_086_url)
-        if heart_checkup_url:
-            attachment_urls.append(heart_checkup_url)
-        if birth_certificate_url:
-            attachment_urls.append(birth_certificate_url)
-
-        # Add contract images if any
-        if contract_images_urls:
-            if len(contract_images_urls) > 1:
-                # faqat 2-chi, 3-chi va hokazo rasmlarni qo'shamiz
-                attachment_urls.extend(contract_images_urls[1:])
-
-        # Merge base PDF with image attachments (each image = 1 page)
-        generator.add_attachments_to_pdf(base_pdf_path, attachment_urls, final_pdf_path)
+        if not final_pdf_path or not isinstance(final_pdf_path, (str, os.PathLike)):
+            raise ValueError(f"PDF generation failed: {type(final_pdf_path)}")
 
         # Upload final PDF to S3
         pdf_s3_url = upload_pdf_to_s3(final_pdf_path, contract_number)
