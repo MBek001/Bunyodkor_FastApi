@@ -802,6 +802,10 @@ async def perform_transaction(params: dict, request_id: int, db: AsyncSession):
             "id": request_id
         }
 
+    # ✅ Debug: Status ni ko'rish
+    print(f"🔍 PerformTransaction: id={payme_id}, status={transaction.status}, paid_at={transaction.paid_at}")
+
+    # ✅ SUCCESS - Idempotent
     if transaction.status == PaymentStatus.SUCCESS:
         return create_success_response(
             {
@@ -815,10 +819,15 @@ async def perform_transaction(params: dict, request_id: int, db: AsyncSession):
             request_id
         )
 
+    # ✅ CANCELLED - Xato qaytarish (har ikkala holat uchun: -1 va -2)
     if transaction.status == PaymentStatus.CANCELLED:
+        # Debug: Qaysi state bo'lganini ko'rish
+        state = -2 if transaction.paid_at else -1
+        print(f"❌ Cannot perform: Transaction is CANCELLED with state {state}")
+
         return {
             "error": {
-                "code": PaymeError.COULD_NOT_PERFORM,
+                "code": PaymeError.COULD_NOT_PERFORM,  # -31008
                 "message": {
                     "ru": "Транзакция отменена",
                     "uz": "Tranzaksiya bekor qilingan",
@@ -828,6 +837,7 @@ async def perform_transaction(params: dict, request_id: int, db: AsyncSession):
             "id": request_id
         }
 
+    # ✅ PENDING - Perform qilish
     contract_result = await db.execute(
         select(Contract).where(Contract.id == transaction.contract_id)
     )
@@ -890,12 +900,15 @@ async def perform_transaction(params: dict, request_id: int, db: AsyncSession):
             "id": request_id
         }
 
+    # ✅ PENDING → SUCCESS
     transaction.status = PaymentStatus.SUCCESS
     transaction.paid_at = datetime.utcnow()
     transaction.comment = f"Payme confirmed: ID {payme_id}, month {payment_month}/{payment_year}"
 
     await db.commit()
     await db.refresh(transaction)
+
+    print(f"✅ Transaction performed: id={transaction.id}, state=2")
 
     return create_success_response(
         {
