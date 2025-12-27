@@ -18,10 +18,13 @@ class Transaction(Base, TimestampMixin):
     status: Mapped[PaymentStatus] = mapped_column(
         SAEnum(PaymentStatus, native_enum=False, length=20), default=PaymentStatus.PENDING, nullable=False
     )
+
     paid_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    cancelled_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     comment: Mapped[str | None] = mapped_column(Text, nullable=True)
     payment_year: Mapped[int | None] = mapped_column(Integer, nullable=True)
     payment_months: Mapped[list | None] = mapped_column(JSON, nullable=True)  # List of months (1-12)
+
 
     student_id: Mapped[int | None] = mapped_column(
         ForeignKey("students.id", ondelete="SET NULL"), nullable=True
