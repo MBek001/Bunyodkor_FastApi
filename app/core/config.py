@@ -6,8 +6,8 @@ class Settings(BaseSettings):
 
     SECRET_KEY: str
     ALGORITHM: str = "HS256"
-    ACCESS_TOKEN_EXPIRE_MINUTES: int = 120  # 2 hours
-    REFRESH_TOKEN_EXPIRE_MINUTES: int = 10080  # 7 days
+    ACCESS_TOKEN_EXPIRE_MINUTES: int = 1  # 2 hours
+    REFRESH_TOKEN_EXPIRE_MINUTES: int = 2  # 7 days
 
     PAYME_MERCHANT_ID: str = ""
     PAYME_KEY: str = ""
