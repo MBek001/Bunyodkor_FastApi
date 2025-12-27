@@ -1058,10 +1058,10 @@ async def cancel_transaction(params: dict, request_id: int, db: AsyncSession):
         state = -2 if transaction.paid_at else -1
         perform_time = int(transaction.paid_at.timestamp() * 1000) if transaction.paid_at else 0
 
-        # ✅ updated_at dan olish
+        # ✅ updated_at dan olish (har doim bir xil!)
         cancel_time = int(transaction.updated_at.timestamp() * 1000) if transaction.updated_at else 0
 
-        # Reason
+        # Reason ni comment dan olish
         saved_reason = 5
         if transaction.comment and "reason" in transaction.comment.lower():
             try:
@@ -1074,7 +1074,7 @@ async def cancel_transaction(params: dict, request_id: int, db: AsyncSession):
             {
                 "create_time": int(transaction.created_at.timestamp() * 1000),
                 "perform_time": perform_time,
-                "cancel_time": cancel_time,
+                "cancel_time": cancel_time,  # ✅ updated_at dan
                 "transaction": str(transaction.id),
                 "state": state,
                 "reason": saved_reason
@@ -1082,25 +1082,25 @@ async def cancel_transaction(params: dict, request_id: int, db: AsyncSession):
             request_id
         )
 
-    # ✅ State aniqlash
+    # ✅ Bekor qilish
     state = -2 if transaction.paid_at else -1
     perform_time = int(transaction.paid_at.timestamp() * 1000) if transaction.paid_at else 0
 
-    # ✅ MUHIM: cancel_time ni commit DAN OLDIN hisoblash!
-    cancel_time_ms = int(datetime.utcnow().timestamp() * 1000)
+    # ✅ Vaqtni bir marta hisoblash!
+    now = datetime.utcnow()
+    cancel_time_ms = int(now.timestamp() * 1000)
 
-    # Bekor qilish
     transaction.status = PaymentStatus.CANCELLED
     transaction.comment = f"Cancelled by Payme: reason {reason}"
 
     await db.commit()
-    # ✅ refresh qilmaymiz!
 
+    # ✅ cancel_time_ms ni ishlatish (har doim bir xil!)
     return create_success_response(
         {
             "create_time": int(transaction.created_at.timestamp() * 1000),
             "perform_time": perform_time,
-            "cancel_time": cancel_time_ms,  # ✅ Hozirgi vaqt (bir marta hisoblangan)
+            "cancel_time": cancel_time_ms,  # ✅ Bir marta hisoblangan!
             "transaction": str(transaction.id),
             "state": state,
             "reason": reason
