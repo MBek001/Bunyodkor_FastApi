@@ -43,33 +43,33 @@ async def login(
     return TokenResponse(access_token=access_token, refresh_token=refresh_token)
 
 
-@router.post("/register", response_model=UserRead)
-async def register(
-    data: RegisterRequest,
-    db: Annotated[AsyncSession, Depends(get_db)],
-):
-    existing_phone = await db.execute(select(User).where(User.phone == data.phone))
-    if existing_phone.scalars().first():
-        raise HTTPException(status_code=400, detail="Phone number already registered")
-
-    if data.email:
-        existing_email = await db.execute(select(User).where(User.email == data.email))
-        if existing_email.scalars().first():
-            raise HTTPException(status_code=400, detail="Email already registered")
-
-    user = User(
-        phone=data.phone,
-        email=data.email,
-        full_name=data.full_name,
-        hashed_password=hash_password(data.password),
-        is_super_admin=False,
-        status=UserStatus.ACTIVE,
-    )
-    db.add(user)
-    await db.commit()
-    await db.refresh(user)
-
-    return UserRead.model_validate(user)
+# @router.post("/register", response_model=UserRead)
+# async def register(
+#     data: RegisterRequest,
+#     db: Annotated[AsyncSession, Depends(get_db)],
+# ):
+#     existing_phone = await db.execute(select(User).where(User.phone == data.phone))
+#     if existing_phone.scalars().first():
+#         raise HTTPException(status_code=400, detail="Phone number already registered")
+#
+#     if data.email:
+#         existing_email = await db.execute(select(User).where(User.email == data.email))
+#         if existing_email.scalars().first():
+#             raise HTTPException(status_code=400, detail="Email already registered")
+#
+#     user = User(
+#         phone=data.phone,
+#         email=data.email,
+#         full_name=data.full_name,
+#         hashed_password=hash_password(data.password),
+#         is_super_admin=False,
+#         status=UserStatus.ACTIVE,
+#     )
+#     db.add(user)
+#     await db.commit()
+#     await db.refresh(user)
+#
+#     return UserRead.model_validate(user)
 
 
 @router.post("/refresh", response_model=TokenResponse)
