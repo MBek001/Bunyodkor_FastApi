@@ -1053,24 +1053,22 @@ async def cancel_transaction(params: dict, request_id: int, db: AsyncSession):
             "id": request_id
         }
 
-    # ✅ Agar allaqachon bekor qilingan bo'lsa - BIR XIL javob qaytarish
+    # ✅ Agar allaqachon bekor qilingan bo'lsa
     if transaction.status == PaymentStatus.CANCELLED:
         state = -2 if transaction.paid_at else -1
         perform_time = int(transaction.paid_at.timestamp() * 1000) if transaction.paid_at else 0
-        cancel_time = int(transaction.updated_at.timestamp() * 1000) if transaction.updated_at else int(
-            datetime.utcnow().timestamp() * 1000)
 
-        # ✅ MUHIM: Comment dan SAQLANGAN reason ni olish
-        saved_reason = 5  # Default
+        # ✅ updated_at dan olish
+        cancel_time = int(transaction.updated_at.timestamp() * 1000) if transaction.updated_at else 0
+
+        # Reason
+        saved_reason = 5
         if transaction.comment and "reason" in transaction.comment.lower():
             try:
-                # "Cancelled by Payme: reason 3" dan 3 ni olish
                 reason_part = transaction.comment.split("reason")[-1].strip()
                 saved_reason = int(reason_part)
             except (ValueError, IndexError):
-                saved_reason = 5  # Default agar parse qilib bo'lmasa
-
-        print(f"🔍 Already cancelled: state={state}, reason={saved_reason}")
+                saved_reason = 5
 
         return create_success_response(
             {
@@ -1079,7 +1077,7 @@ async def cancel_transaction(params: dict, request_id: int, db: AsyncSession):
                 "cancel_time": cancel_time,
                 "transaction": str(transaction.id),
                 "state": state,
-                "reason": saved_reason  # ✅ Comment dan olingan reason
+                "reason": saved_reason
             },
             request_id
         )
@@ -1088,25 +1086,24 @@ async def cancel_transaction(params: dict, request_id: int, db: AsyncSession):
     state = -2 if transaction.paid_at else -1
     perform_time = int(transaction.paid_at.timestamp() * 1000) if transaction.paid_at else 0
 
-    print(f"🔍 Cancelling: state={state}, reason={reason}")
+    # ✅ MUHIM: cancel_time ni commit DAN OLDIN hisoblash!
+    cancel_time_ms = int(datetime.utcnow().timestamp() * 1000)
 
-    # ✅ Bekor qilish
+    # Bekor qilish
     transaction.status = PaymentStatus.CANCELLED
     transaction.comment = f"Cancelled by Payme: reason {reason}"
 
-    # ✅ Hozirgi vaqtni olish (cancel_time uchun)
-    cancel_time_ms = int(datetime.utcnow().timestamp() * 1000)
-
     await db.commit()
+    # ✅ refresh qilmaymiz!
 
     return create_success_response(
         {
             "create_time": int(transaction.created_at.timestamp() * 1000),
             "perform_time": perform_time,
-            "cancel_time": cancel_time_ms,
+            "cancel_time": cancel_time_ms,  # ✅ Hozirgi vaqt (bir marta hisoblangan)
             "transaction": str(transaction.id),
             "state": state,
-            "reason": reason  # ✅ Yuborilgan reason
+            "reason": reason
         },
         request_id
     )
